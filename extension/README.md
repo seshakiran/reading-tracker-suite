@@ -35,11 +35,23 @@ A browser extension that automatically tracks your web reading habits and syncs 
 
 ### Icons
 
-The extension currently uses placeholder icons. To add custom icons, replace these files:
-- `public/icon16.png` (16x16px)
-- `public/icon32.png` (32x32px) 
-- `public/icon48.png` (48x48px)
-- `public/icon128.png` (128x128px)
+The extension currently runs without custom icons (using browser defaults). To add custom icons:
+
+1. Create PNG files in the `public/` directory:
+   - `public/icon16.png` (16x16px)
+   - `public/icon32.png` (32x32px) 
+   - `public/icon48.png` (48x48px)
+   - `public/icon128.png` (128x128px)
+
+2. Update `manifest.json` to include the icons section:
+   ```json
+   "icons": {
+     "16": "public/icon16.png",
+     "32": "public/icon32.png", 
+     "48": "public/icon48.png",
+     "128": "public/icon128.png"
+   }
+   ```
 
 ## How It Works
 

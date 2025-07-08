@@ -29,26 +29,6 @@
   
   "action": {
     "default_popup": "public/popup.html",
-    "default_title": "Reading Tracker",
-    "default_icon": {
-      "16": "public/icon16.png",
-      "32": "public/icon32.png",
-      "48": "public/icon48.png",
-      "128": "public/icon128.png"
-    }
-  },
-  
-  "icons": {
-    "16": "public/icon16.png",
-    "32": "public/icon32.png",
-    "48": "public/icon48.png",
-    "128": "public/icon128.png"
-  },
-  
-  "web_accessible_resources": [
-    {
-      "resources": ["src/tracker.js"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+    "default_title": "Reading Tracker"
+  }
 }
