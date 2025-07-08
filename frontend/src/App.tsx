@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import Dashboard from './components/Dashboard';
+import AddReadingForm from './components/AddReadingForm';
 import { BookOpen, Plus, Settings, BarChart3 } from 'lucide-react';
 
 function App() {
@@ -19,7 +20,16 @@ function App() {
       case 'sessions':
         return <div className="text-center py-12">Sessions view coming soon...</div>;
       case 'add':
-        return <div className="text-center py-12">Add reading form coming soon...</div>;
+        return (
+          <AddReadingForm 
+            onSuccess={() => {
+              setCurrentView('dashboard');
+            }}
+            onCancel={() => {
+              setCurrentView('dashboard');
+            }}
+          />
+        );
       case 'settings':
         return <div className="text-center py-12">Settings coming soon...</div>;
       default:
