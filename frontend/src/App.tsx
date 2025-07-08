@@ -1,0 +1,79 @@
+import React, { useState } from 'react';
+import Dashboard from './components/Dashboard';
+import { BookOpen, Plus, Settings, BarChart3 } from 'lucide-react';
+
+function App() {
+  const [currentView, setCurrentView] = useState<'dashboard' | 'sessions' | 'add' | 'settings'>('dashboard');
+
+  const navigation = [
+    { name: 'Dashboard', icon: BarChart3, key: 'dashboard' as const },
+    { name: 'Sessions', icon: BookOpen, key: 'sessions' as const },
+    { name: 'Add Reading', icon: Plus, key: 'add' as const },
+    { name: 'Settings', icon: Settings, key: 'settings' as const },
+  ];
+
+  const renderContent = () => {
+    switch (currentView) {
+      case 'dashboard':
+        return <Dashboard />;
+      case 'sessions':
+        return <div className="text-center py-12">Sessions view coming soon...</div>;
+      case 'add':
+        return <div className="text-center py-12">Add reading form coming soon...</div>;
+      case 'settings':
+        return <div className="text-center py-12">Settings coming soon...</div>;
+      default:
+        return <Dashboard />;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center py-6">
+            <div className="flex items-center">
+              <BookOpen className="h-8 w-8 text-blue-600" />
+              <h1 className="ml-3 text-2xl font-bold text-gray-900">Reading Tracker</h1>
+            </div>
+            <div className="flex items-center space-x-4">
+              <span className="text-sm text-gray-500">Welcome back!</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex gap-8">
+          {/* Sidebar */}
+          <div className="w-64 flex-shrink-0">
+            <nav className="space-y-2">
+              {navigation.map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => setCurrentView(item.key)}
+                  className={`w-full flex items-center px-4 py-2 text-left rounded-lg transition-colors ${
+                    currentView === item.key
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <item.icon className="h-5 w-5 mr-3" />
+                  {item.name}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          {/* Main Content */}
+          <div className="flex-1">
+            {renderContent()}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;
