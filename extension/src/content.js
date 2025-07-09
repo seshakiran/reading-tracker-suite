@@ -9,17 +9,37 @@ class ReadingTracker {
     this.pageTitle = document.title;
     this.wordCount = 0;
     this.scrollPercentage = 0;
+    this.contentAnalyzer = new UniversalContentAnalyzer();
+    this.analysisResult = null;
     
     this.init();
   }
   
-  init() {
-    // Only track on article-like pages
-    if (this.isArticlePage()) {
-      console.log('Reading Tracker: Initializing on article page');
-      this.extractContent();
+  async init() {
+    // Smart content analysis
+    console.log('Reading Tracker: Analyzing content for tracking eligibility...');
+    this.extractContent();
+    
+    // Analyze content with smart filtering
+    this.analysisResult = await this.contentAnalyzer.analyzeContent(
+      this.currentUrl,
+      this.pageTitle,
+      this.getPageContent()
+    );
+    
+    if (this.analysisResult.shouldTrack) {
+      console.log('Reading Tracker: Content approved for tracking', {
+        learningScore: this.analysisResult.learningScore,
+        category: this.analysisResult.category,
+        reason: this.analysisResult.reason
+      });
       this.setupEventListeners();
       this.startTracking();
+    } else {
+      console.log('Reading Tracker: Content not suitable for tracking', {
+        learningScore: this.analysisResult.learningScore,
+        reason: this.analysisResult.reason
+      });
     }
   }
   
@@ -80,8 +100,17 @@ class ReadingTracker {
     
     const text = mainContent.innerText || mainContent.textContent || '';
     this.wordCount = text.split(/\s+/).filter(word => word.length > 0).length;
+    this.mainContent = mainContent;
     
     console.log(`Reading Tracker: Detected ${this.wordCount} words`);
+  }
+  
+  getPageContent() {
+    // Get full page content for analysis
+    if (this.mainContent) {
+      return this.mainContent.innerText || this.mainContent.textContent || '';
+    }
+    return document.body.innerText || document.body.textContent || '';
   }
   
   setupEventListeners() {
@@ -169,6 +198,7 @@ class ReadingTracker {
       return;
     }
     
+    // Include smart filtering results
     const session = {
       title: this.pageTitle,
       url: this.currentUrl,
@@ -177,10 +207,18 @@ class ReadingTracker {
       word_count: this.wordCount,
       excerpt: this.extractExcerpt(),
       scroll_percentage: Math.round(this.scrollPercentage),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      learning_score: this.analysisResult?.learningScore || 0,
+      category: this.analysisResult?.category || 'other',
+      signals: this.analysisResult?.signals || {}
     };
     
-    console.log('Reading Tracker: Saving session', session);
+    console.log('Reading Tracker: Saving high-quality session', {
+      title: session.title,
+      learningScore: session.learning_score,
+      category: session.category,
+      readingTime: session.reading_time
+    });
     
     try {
       // Send to background script

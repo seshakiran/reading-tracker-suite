@@ -64,18 +64,18 @@ app.get('/api/sessions', (req, res) => {
 
 // Create new reading session
 app.post('/api/sessions', (req, res) => {
-  const { title, url, content_type, reading_time, word_count, excerpt, notes, tags } = req.body;
+  const { title, url, content_type, reading_time, word_count, excerpt, notes, tags, learning_score, category } = req.body;
   
   if (!title) {
     return res.status(400).json({ error: 'Title is required' });
   }
   
   const sql = `
-    INSERT INTO reading_sessions (title, url, content_type, reading_time, word_count, excerpt, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO reading_sessions (title, url, content_type, reading_time, word_count, excerpt, notes, learning_score, category)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   
-  db.run(sql, [title, url, content_type || 'web', reading_time || 0, word_count || 0, excerpt, notes], function(err) {
+  db.run(sql, [title, url, content_type || 'web', reading_time || 0, word_count || 0, excerpt, notes, learning_score || 0, category || 'other'], function(err) {
     if (err) {
       console.error('Error creating session:', err.message);
       return res.status(500).json({ error: 'Internal server error' });
@@ -126,6 +126,7 @@ app.get('/api/stats', (req, res) => {
       SUM(reading_time) as total_reading_time,
       SUM(word_count) as total_words,
       AVG(reading_time) as avg_reading_time,
+      AVG(learning_score) as avg_learning_score,
       COUNT(DISTINCT DATE(created_at)) as reading_days
     FROM reading_sessions
   `;
@@ -136,12 +137,29 @@ app.get('/api/stats', (req, res) => {
       return res.status(500).json({ error: 'Internal server error' });
     }
     
-    res.json({
-      totalSessions: row.total_sessions || 0,
-      totalReadingTime: row.total_reading_time || 0,
-      totalWords: row.total_words || 0,
-      averageReadingTime: Math.round(row.avg_reading_time || 0),
-      readingDays: row.reading_days || 0
+    // Get category breakdown
+    const categorySQL = `
+      SELECT category, COUNT(*) as count, SUM(reading_time) as total_time, AVG(learning_score) as avg_score
+      FROM reading_sessions 
+      GROUP BY category
+      ORDER BY count DESC
+    `;
+    
+    db.all(categorySQL, [], (err, categories) => {
+      if (err) {
+        console.error('Error fetching category stats:', err.message);
+        categories = [];
+      }
+      
+      res.json({
+        totalSessions: row.total_sessions || 0,
+        totalReadingTime: row.total_reading_time || 0,
+        totalWords: row.total_words || 0,
+        averageReadingTime: Math.round(row.avg_reading_time || 0),
+        averageLearningScore: Math.round(row.avg_learning_score || 0),
+        readingDays: row.reading_days || 0,
+        categories: categories || []
+      });
     });
   });
 });

@@ -26,6 +26,8 @@ const createTables = () => {
       word_count INTEGER DEFAULT 0,
       excerpt TEXT,
       notes TEXT,
+      learning_score INTEGER DEFAULT 0,
+      category TEXT DEFAULT 'other',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
