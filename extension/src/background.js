@@ -31,6 +31,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     return true;
   }
+  
+  if (message.action === 'clearStorage') {
+    chrome.storage.local.clear(() => {
+      console.log('Extension storage cleared');
+      sendResponse({ success: true });
+    });
+    return true;
+  }
 });
 
 // Save reading session to API
