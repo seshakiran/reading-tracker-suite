@@ -2,7 +2,7 @@
 class UniversalContentAnalyzer {
   constructor() {
     this.userPreferences = {
-      minimumLearningScore: 65, // 0-100
+      minimumLearningScore: 50, // 0-100 (temporarily lowered for debugging)
       allowedLanguages: ['en'],
       preferredTopics: ['technology', 'science', 'education', 'business'],
       blockedKeywords: ['politics', 'celebrity', 'sports', 'gossip'],
@@ -105,8 +105,10 @@ class UniversalContentAnalyzer {
     
     // Quick negative signal check first
     const negativeSignals = this.detectNegativeSignals(title, content, url);
+    console.log('🔍 Negative signals check:', negativeSignals);
+    
     if (negativeSignals.shouldBlock) {
-      console.log('Content blocked due to negative signals:', negativeSignals.reason);
+      console.log('❌ Content blocked due to negative signals:', negativeSignals.reason);
       return {
         shouldTrack: false,
         learningScore: 0,
@@ -131,8 +133,22 @@ class UniversalContentAnalyzer {
       title: title.substring(0, 50) + '...',
       learningScore,
       shouldTrack,
+      threshold: this.userPreferences.minimumLearningScore,
       signals
     });
+    
+    // Detailed debugging for failed content
+    if (!shouldTrack) {
+      console.log('🔍 Why content was rejected:', {
+        learningScore,
+        minimumRequired: this.userPreferences.minimumLearningScore,
+        contentQuality: signals.contentQuality?.qualityScore,
+        learningIndicators: signals.learningIndicators?.learningScore,
+        languageScore: signals.languageRelevance?.languageScore,
+        topicalRelevance: signals.topicalRelevance?.topicalRelevance,
+        credibility: signals.sourceCredibility?.credibilityScore
+      });
+    }
     
     return {
       shouldTrack,
