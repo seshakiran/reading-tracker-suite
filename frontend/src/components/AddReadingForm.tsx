@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Save, X, Tag } from 'lucide-react';
-import { createSession, getTags } from '../services/api';
-import { Tag as TagType, NewSession } from '../types';
+import { createSession, getTags } from '../services/api.ts';
+import { Tag as TagType, NewSession } from '../types/index.ts';
 
 interface AddReadingFormProps {
   onSuccess?: () => void;

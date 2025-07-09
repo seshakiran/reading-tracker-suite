@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import Dashboard from './components/Dashboard';
-import AddReadingForm from './components/AddReadingForm';
+import Dashboard from './components/Dashboard.tsx';
+import AddReadingForm from './components/AddReadingForm.tsx';
+import SessionsList from './components/SessionsList.tsx';
 import { BookOpen, Plus, Settings, BarChart3 } from 'lucide-react';
 
 function App() {
@@ -18,7 +19,7 @@ function App() {
       case 'dashboard':
         return <Dashboard />;
       case 'sessions':
-        return <div className="text-center py-12">Sessions view coming soon...</div>;
+        return <SessionsList />;
       case 'add':
         return (
           <AddReadingForm 

@@ -160,6 +160,29 @@ app.get('/api/tags', (req, res) => {
   });
 });
 
+// Reset database (development only)
+app.delete('/api/reset', (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'Reset not allowed in production' });
+  }
+  
+  const resetSql = `
+    DELETE FROM session_tags;
+    DELETE FROM reading_sessions;
+    UPDATE sqlite_sequence SET seq = 0 WHERE name = 'reading_sessions';
+  `;
+  
+  db.exec(resetSql, (err) => {
+    if (err) {
+      console.error('Error resetting database:', err.message);
+      return res.status(500).json({ error: 'Failed to reset database' });
+    }
+    
+    console.log('Database reset successfully');
+    res.json({ message: 'Database reset successfully', timestamp: new Date().toISOString() });
+  });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);

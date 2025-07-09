@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, Clock, FileText, TrendingUp } from 'lucide-react';
-import { ReadingStats } from '../types';
-import { getStats } from '../services/api';
+import { ReadingStats } from '../types/index.ts';
+import { getStats } from '../services/api.ts';
 
 const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<ReadingStats | null>(null);
