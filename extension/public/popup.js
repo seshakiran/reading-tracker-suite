@@ -77,9 +77,12 @@ async function checkApiConnection() {
 }
 
 function setupEventListeners() {
-  // Manual entry button
+  // Manual entry button - open the add reading form
   document.getElementById('manualEntry').addEventListener('click', () => {
-    chrome.tabs.create({ url: 'http://localhost:3000' });
+    chrome.tabs.create({ 
+      url: chrome.runtime.getURL('public/add-reading.html'),
+      active: true
+    });
   });
   
   // Sync now button

@@ -30,5 +30,12 @@
   "action": {
     "default_popup": "public/popup.html",
     "default_title": "Reading Tracker"
-  }
+  },
+  
+  "web_accessible_resources": [
+    {
+      "resources": ["public/add-reading.html", "public/add-reading.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
