@@ -71,7 +71,21 @@ class UniversalContentAnalyzer {
       /\b(solution|solve|problem|challenge|approach|method|technique)\b/gi,
       
       // Technical communication
-      /\b(documentation|specification|requirements|design|review)\b/gi
+      /\b(documentation|specification|requirements|design|review)\b/gi,
+      
+      // Business strategy and entrepreneurship
+      /\b(strategy|strategic|business model|disruption|transformation|pivot|adaptation)\b/gi,
+      /\b(entrepreneurship|startup|founder|CEO|leadership|management|execution)\b/gi,
+      /\b(competitive advantage|market opportunity|customer needs|value proposition)\b/gi,
+      /\b(lessons from|case study|success story|failure|what went wrong|why companies)\b/gi,
+      
+      // Learning from history/examples
+      /\b(history shows|historical|example|demonstrates|illustrates|proves)\b/gi,
+      /\b(companies that|businesses that|organizations that|CEOs who|leaders who)\b/gi,
+      
+      // Strategic thinking
+      /\b(think about|consider|understand|realize|recognize|important to)\b/gi,
+      /\b(key insight|critical factor|main reason|primary cause|root cause)\b/gi
     ];
     
     this.negativePatterns = [
@@ -222,7 +236,7 @@ class UniversalContentAnalyzer {
       hasStepByStep,
       hasTechnicalTerms,
       hasActionableContent,
-      learningScore: this.calculateLearningScore({
+      learningScore: this.calculateLearningIndicatorScore({
         keywords: learningKeywordCount,
         qa: hasQuestionAnswerFormat,
         stepByStep: hasStepByStep,
@@ -230,6 +244,28 @@ class UniversalContentAnalyzer {
         actionable: hasActionableContent
       })
     };
+  }
+  
+  // Calculate learning indicator score specifically
+  calculateLearningIndicatorScore(indicators) {
+    let score = 0;
+    
+    // Keywords matching learning patterns (most important)
+    score += Math.min(indicators.keywords * 8, 40);
+    
+    // Question/answer format
+    if (indicators.qa) score += 15;
+    
+    // Step-by-step content
+    if (indicators.stepByStep) score += 10;
+    
+    // Technical terms
+    score += Math.min(indicators.technical * 3, 20);
+    
+    // Actionable content
+    if (indicators.actionable) score += 15;
+    
+    return Math.min(score, 100);
   }
   
   countTechnicalTerms(content) {
