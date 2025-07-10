@@ -2,15 +2,17 @@ import React, { useState } from 'react';
 import Dashboard from './components/Dashboard.tsx';
 import AddReadingForm from './components/AddReadingForm.tsx';
 import SessionsList from './components/SessionsList.tsx';
-import { BookOpen, Plus, Settings, BarChart3 } from 'lucide-react';
+import Newsletter from './components/Newsletter.tsx';
+import { BookOpen, Plus, Settings, BarChart3, Mail } from 'lucide-react';
 
 function App() {
-  const [currentView, setCurrentView] = useState<'dashboard' | 'sessions' | 'add' | 'settings'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'sessions' | 'add' | 'newsletter' | 'settings'>('dashboard');
 
   const navigation = [
     { name: 'Dashboard', icon: BarChart3, key: 'dashboard' as const },
     { name: 'Sessions', icon: BookOpen, key: 'sessions' as const },
     { name: 'Add Reading', icon: Plus, key: 'add' as const },
+    { name: 'Newsletter', icon: Mail, key: 'newsletter' as const },
     { name: 'Settings', icon: Settings, key: 'settings' as const },
   ];
 
@@ -31,6 +33,8 @@ function App() {
             }}
           />
         );
+      case 'newsletter':
+        return <Newsletter />;
       case 'settings':
         return <div className="text-center py-12">Settings coming soon...</div>;
       default:

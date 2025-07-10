@@ -201,6 +201,198 @@ app.delete('/api/reset', (req, res) => {
   });
 });
 
+// Newsletter generation endpoint
+app.post('/api/newsletter/generate', async (req, res) => {
+  try {
+    const { dateRange = 7, includeCategories = ['all'], excludeLowScore = true, minScore = 50 } = req.body;
+    
+    console.log('Generating newsletter with params:', { dateRange, includeCategories, excludeLowScore, minScore });
+    
+    // Get reading sessions from the specified date range
+    let dateFrom, dateTo;
+    
+    if (dateRange === 0) {
+      // Today only - from start of today to end of today  
+      const today = new Date().toISOString().split('T')[0]; // Get YYYY-MM-DD format
+      dateFrom = today + ' 00:00:00';
+      dateTo = today + ' 23:59:59';
+    } else {
+      // Previous days
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - dateRange);
+      
+      dateFrom = startDate.toISOString().split('T')[0] + ' 00:00:00';
+      dateTo = endDate.toISOString().split('T')[0] + ' 23:59:59';
+    }
+    
+    let sql = `
+      SELECT 
+        rs.*,
+        GROUP_CONCAT(t.name) as tags,
+        GROUP_CONCAT(t.color) as tag_colors
+      FROM reading_sessions rs
+      LEFT JOIN session_tags st ON rs.id = st.session_id
+      LEFT JOIN tags t ON st.tag_id = t.id
+      WHERE rs.created_at >= ? AND rs.created_at <= ?
+    `;
+    
+    const params = [dateFrom, dateTo];
+    
+    // Add category filter if not 'all'
+    if (!includeCategories.includes('all')) {
+      sql += ` AND rs.category IN (${includeCategories.map(() => '?').join(',')})`;
+      params.push(...includeCategories);
+    }
+    
+    // Add minimum score filter
+    if (excludeLowScore) {
+      sql += ` AND rs.learning_score >= ?`;
+      params.push(minScore);
+    }
+    
+    sql += ` GROUP BY rs.id ORDER BY rs.learning_score DESC, rs.created_at DESC`;
+    
+    db.all(sql, params, (err, sessions) => {
+      if (err) {
+        console.error('Error fetching sessions for newsletter:', err.message);
+        return res.status(500).json({ error: 'Failed to fetch sessions' });
+      }
+      
+      // Process sessions for newsletter
+      const processedSessions = sessions.map(session => ({
+        ...session,
+        tags: session.tags ? session.tags.split(',') : [],
+        tag_colors: session.tag_colors ? session.tag_colors.split(',') : [],
+        reading_time_formatted: `${session.reading_time} min`,
+        created_at_formatted: new Date(session.created_at).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        })
+      }));
+      
+      // Group by category
+      const categorizedSessions = processedSessions.reduce((acc, session) => {
+        const category = session.category || 'other';
+        if (!acc[category]) {
+          acc[category] = [];
+        }
+        acc[category].push(session);
+        return acc;
+      }, {});
+      
+      // Generate newsletter content
+      const newsletter = generateNewsletterContent(processedSessions, categorizedSessions, dateRange);
+      
+      res.json({
+        success: true,
+        newsletter,
+        stats: {
+          totalSessions: processedSessions.length,
+          dateRange,
+          categories: Object.keys(categorizedSessions),
+          avgLearningScore: processedSessions.length > 0 
+            ? Math.round(processedSessions.reduce((sum, s) => sum + s.learning_score, 0) / processedSessions.length)
+            : 0
+        },
+        timestamp: new Date().toISOString()
+      });
+    });
+    
+  } catch (error) {
+    console.error('Newsletter generation error:', error);
+    res.status(500).json({ error: 'Failed to generate newsletter' });
+  }
+});
+
+// Helper function to generate newsletter content
+function generateNewsletterContent(sessions, categorizedSessions, dateRange) {
+  const today = new Date();
+  const dateStr = today.toLocaleDateString('en-US', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  
+  let newsletter = {
+    title: `Reading Digest - ${dateStr}`,
+    subtitle: dateRange === 0 
+      ? `My curated learning from today` 
+      : `My curated learning from the past ${dateRange} days`,
+    intro: generateIntro(sessions, dateRange),
+    sections: [],
+    footer: generateFooter(sessions)
+  };
+  
+  // Create sections by category
+  const categoryTitles = {
+    technology: '🔧 Technology & Development',
+    science: '🔬 Science & Research', 
+    business: '💼 Business & Strategy',
+    education: '📚 Learning & Education',
+    future: '🚀 Future & Innovation',
+    other: '📝 Other Insights'
+  };
+  
+  Object.entries(categorizedSessions).forEach(([category, categorySessions]) => {
+    if (categorySessions.length === 0) return;
+    
+    newsletter.sections.push({
+      title: categoryTitles[category] || `📄 ${category.charAt(0).toUpperCase() + category.slice(1)}`,
+      items: categorySessions.map(session => ({
+        title: session.title,
+        url: session.url,
+        excerpt: session.excerpt || generateExcerpt(session),
+        readingTime: session.reading_time,
+        learningScore: session.learning_score,
+        tags: session.tags,
+        date: session.created_at_formatted,
+        category: session.category
+      }))
+    });
+  });
+  
+  return newsletter;
+}
+
+function generateIntro(sessions, dateRange) {
+  const totalSessions = sessions.length;
+  const totalReadingTime = sessions.reduce((sum, s) => sum + s.reading_time, 0);
+  const avgScore = sessions.length > 0 
+    ? Math.round(sessions.reduce((sum, s) => sum + s.learning_score, 0) / sessions.length)
+    : 0;
+  
+  const timeFrame = dateRange === 0 
+    ? 'today' 
+    : `over the past ${dateRange} days`;
+    
+  const readingDescription = dateRange === 0
+    ? `Today I've been tracking my reading and discovered some fascinating insights`
+    : `Over the past ${dateRange} days, I've been tracking my reading habits and discovered some fascinating insights`;
+  
+  return `${readingDescription}. I've read ${totalSessions} high-quality articles and resources, spending ${totalReadingTime} minutes learning about technology, business strategy, and innovation. Here are the highlights with an average learning value of ${avgScore}/100.`;
+}
+
+function generateExcerpt(session) {
+  if (session.excerpt) return session.excerpt;
+  
+  // Generate a simple excerpt based on title and basic info
+  return `Insights on ${session.category} with a learning score of ${session.learning_score}/100. Read time: ${session.reading_time} minutes.`;
+}
+
+function generateFooter(sessions) {
+  const categories = [...new Set(sessions.map(s => s.category))];
+  return {
+    totalArticles: sessions.length,
+    categoriesCovered: categories.length,
+    categories: categories,
+    generatedAt: new Date().toISOString(),
+    message: "This digest was automatically generated from my reading tracker. Each article was intelligently filtered and scored for learning value."
+  };
+}
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
