@@ -5,9 +5,9 @@ class UniversalContentAnalyzer {
       minimumLearningScore: 50, // 0-100 (temporarily lowered for debugging)
       allowedLanguages: ['en'],
       preferredTopics: ['technology', 'science', 'education', 'business'],
-      blockedKeywords: ['politics', 'celebrity', 'sports', 'gossip'],
+      blockedKeywords: ['celebrity gossip', 'sports news', 'political drama', 'entertainment news'],
       minimumReadingTime: 3, // minutes
-      minimumWordCount: 300,
+      minimumWordCount: 150, // Reduced for product pages
       allowSocialMedia: true,
       allowVideoContent: true
     };
@@ -85,12 +85,18 @@ class UniversalContentAnalyzer {
       
       // Strategic thinking
       /\b(think about|consider|understand|realize|recognize|important to)\b/gi,
-      /\b(key insight|critical factor|main reason|primary cause|root cause)\b/gi
+      /\b(key insight|critical factor|main reason|primary cause|root cause)\b/gi,
+      
+      // Product and tool patterns
+      /\b(features|capabilities|functionality|use case|application|benefit)\b/gi,
+      /\b(tool|platform|service|solution|framework|library|software)\b/gi,
+      /\b(getting started|quickstart|setup|installation|configuration)\b/gi,
+      /\b(documentation|api reference|user guide|manual|specification)\b/gi
     ];
     
     this.negativePatterns = [
       // News consumption patterns
-      /\b(breaking news|just in|live updates|happening now|urgent|alert)\b/gi,
+      /\b(breaking news|just in|live updates|happening now|urgent news|news alert)\b/gi,
       
       // Entertainment/gossip
       /\b(celebrity|gossip|scandal|controversy|drama|rumor|shocking)\b/gi,
@@ -100,10 +106,10 @@ class UniversalContentAnalyzer {
       /\d+ (things|ways|reasons|secrets|tricks) (that|you|to)/gi,
       
       // Political/divisive content
-      /\b(election|politics|political|government|policy|debate|partisan)\b/gi,
+      /\b(election|politics|political|government policy|policy debate|partisan)\b/gi,
       
       // Sports/entertainment scores
-      /\b(score|match|game|tournament|championship|winner|defeat|victory)\b/gi,
+      /\b(sports score|game score|match result|tournament|championship|sports winner|defeat|victory)\b/gi,
       
       // Social media drama
       /\b(twitter drama|social media drama|viral|trending|meme|outrage)\b/gi,
@@ -132,7 +138,7 @@ class UniversalContentAnalyzer {
     }
     
     const signals = {
-      contentQuality: this.analyzeContentQuality(content),
+      contentQuality: this.analyzeContentQuality(content, url, title),
       learningIndicators: this.detectLearningSignals(title, content),
       languageRelevance: this.analyzeLanguage(content),
       topicalRelevance: this.analyzeTopics(title, content),
@@ -174,9 +180,10 @@ class UniversalContentAnalyzer {
   }
   
   // Analyze content quality signals
-  analyzeContentQuality(content) {
+  analyzeContentQuality(content, url, title) {
     const wordCount = this.countWords(content);
     const readingTime = Math.ceil(wordCount / 250); // 250 words per minute
+    const isProductPage = this.isProductPage(url, title, content);
     
     const hasCodeExamples = /<code[^>]*>|```|\bclass\s+\w+|\bfunction\s+\w+|\bdef\s+\w+|\bconst\s+\w+/gi.test(content);
     const hasStructure = /<h[1-6]>|<li>|<ol>|<ul>|\n#{1,6}\s|\n\*\s|\n\d+\./gi.test(content);
@@ -186,31 +193,53 @@ class UniversalContentAnalyzer {
     return {
       wordCount,
       readingTime,
+      isProductPage,
       hasCodeExamples: hasCodeExamples,
       hasStructure: hasStructure,
       hasReferences: hasReferences,
       hasLinks: hasLinks,
-      qualityScore: this.calculateQualityScore(wordCount, readingTime, hasCodeExamples, hasStructure, hasReferences)
+      qualityScore: this.calculateQualityScore(wordCount, readingTime, hasCodeExamples, hasStructure, hasReferences, isProductPage)
     };
   }
   
-  calculateQualityScore(wordCount, readingTime, hasCodeExamples, hasStructure, hasReferences) {
+  calculateQualityScore(wordCount, readingTime, hasCodeExamples, hasStructure, hasReferences, isProductPage = false) {
     let score = 0;
     
-    // Word count scoring
-    if (wordCount >= 1000) score += 30;
-    else if (wordCount >= 500) score += 20;
-    else if (wordCount >= 300) score += 10;
-    
-    // Reading time scoring
-    if (readingTime >= 10) score += 20;
-    else if (readingTime >= 5) score += 15;
-    else if (readingTime >= 3) score += 10;
-    
-    // Structure and examples
-    if (hasCodeExamples) score += 15;
-    if (hasStructure) score += 10;
-    if (hasReferences) score += 15;
+    if (isProductPage) {
+      // More lenient scoring for product pages
+      if (wordCount >= 200) score += 30;
+      else if (wordCount >= 100) score += 25;
+      else if (wordCount >= 50) score += 20; // Give credit for concise product descriptions
+      else if (wordCount >= 25) score += 15;
+      
+      // Reading time scoring (more lenient)
+      if (readingTime >= 3) score += 20;
+      else if (readingTime >= 1) score += 15;
+      else if (readingTime >= 0.5) score += 10;
+      
+      // Structure and examples (same importance)
+      if (hasCodeExamples) score += 15;
+      if (hasStructure) score += 10;
+      if (hasReferences) score += 15;
+      
+      // Bonus for being a product page (they're inherently valuable)
+      score += 10;
+    } else {
+      // Original scoring for articles
+      if (wordCount >= 1000) score += 30;
+      else if (wordCount >= 500) score += 20;
+      else if (wordCount >= 300) score += 10;
+      
+      // Reading time scoring
+      if (readingTime >= 10) score += 20;
+      else if (readingTime >= 5) score += 15;
+      else if (readingTime >= 3) score += 10;
+      
+      // Structure and examples
+      if (hasCodeExamples) score += 15;
+      if (hasStructure) score += 10;
+      if (hasReferences) score += 15;
+    }
     
     return Math.min(score, 100);
   }
@@ -438,20 +467,32 @@ class UniversalContentAnalyzer {
     const titleAndContent = title + ' ' + content;
     
     // Check for blocked keywords
-    const hasBlockedKeywords = this.userPreferences.blockedKeywords.some(keyword => 
-      titleAndContent.toLowerCase().includes(keyword.toLowerCase())
-    );
+    const hasBlockedKeywords = this.userPreferences.blockedKeywords.some(keyword => {
+      const isBlocked = titleAndContent.toLowerCase().includes(keyword.toLowerCase());
+      if (isBlocked) {
+        console.log(`🚫 Blocked keyword detected: "${keyword}" in content`);
+      }
+      return isBlocked;
+    });
     
     // Check for negative patterns
     let negativeScore = 0;
-    this.negativePatterns.forEach(pattern => {
+    this.negativePatterns.forEach((pattern, index) => {
       const matches = titleAndContent.match(pattern);
-      if (matches) negativeScore += matches.length;
+      if (matches) {
+        console.log(`🚫 Negative pattern ${index + 1} matched: ${matches.length} times -`, matches.slice(0, 3));
+        negativeScore += matches.length;
+      }
     });
     
-    // Check content length
+    // Check content length with special handling for product pages
     const wordCount = this.countWords(content);
-    const isTooShort = wordCount < this.userPreferences.minimumWordCount;
+    const isProductPage = this.isProductPage(url, title, content);
+    const minimumRequired = isProductPage ? 50 : this.userPreferences.minimumWordCount;
+    const isTooShort = wordCount < minimumRequired;
+    
+    console.log(`📏 Content length check: ${wordCount} words, minimum: ${minimumRequired} (${isProductPage ? 'product page' : 'article'})`);
+    
     
     // Check language
     const languageAnalysis = this.analyzeLanguage(content);
@@ -507,6 +548,21 @@ class UniversalContentAnalyzer {
     ) || 'other';
   }
   
+  // Check if this is a product/tool page
+  isProductPage(url, title, content) {
+    const productIndicators = [
+      'tool', 'platform', 'service', 'app', 'software', 'api',
+      'product', 'solution', 'framework', 'library', 'model',
+      'features', 'overview', 'getting started', 'quickstart',
+      'ai', 'ml', 'machine learning', 'artificial intelligence',
+      'llm', 'gpt', 'neural', 'dataset', 'browser', 'extension'
+    ];
+    
+    const textToCheck = (url + ' ' + title + ' ' + content).toLowerCase();
+    
+    return productIndicators.some(indicator => textToCheck.includes(indicator));
+  }
+
   // Helper functions
   extractDomain(url) {
     try {
