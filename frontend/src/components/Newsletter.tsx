@@ -96,11 +96,10 @@ const Newsletter: React.FC = () => {
         content += `${item.title}\n`;
         content += `${item.url}\n\n`;
         content += `${item.excerpt}\n\n`;
-        content += `Reading time: ${item.readingTime} min | Learning score: ${item.learningScore}/100`;
         if (item.tags.length > 0) {
-          content += ` | Tags: ${item.tags.join(', ')}`;
+          content += `Tags: ${item.tags.join(', ')}\n\n`;
         }
-        content += `\n\n---\n\n`;
+        content += `---\n\n`;
       });
     });
     
@@ -138,11 +137,10 @@ const Newsletter: React.FC = () => {
       section.items.forEach(item => {
         markdown += `### [${item.title}](${item.url})\n\n`;
         markdown += `${item.excerpt}\n\n`;
-        markdown += `**Reading time:** ${item.readingTime} min | **Learning score:** ${item.learningScore}/100`;
         if (item.tags.length > 0) {
-          markdown += ` | **Tags:** ${item.tags.join(', ')}`;
+          markdown += `**Tags:** ${item.tags.join(', ')}\n\n`;
         }
-        markdown += `\n\n---\n\n`;
+        markdown += `---\n\n`;
       });
     });
     
@@ -366,8 +364,6 @@ const Newsletter: React.FC = () => {
                           {item.excerpt}
                         </p>
                         <div className="flex items-center space-x-4 text-xs text-gray-500">
-                          <span>{item.readingTime} min read</span>
-                          <span>Score: {item.learningScore}/100</span>
                           <span>{item.date}</span>
                           {item.tags.length > 0 && (
                             <div className="flex items-center space-x-1">
