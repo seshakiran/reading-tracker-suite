@@ -339,6 +339,7 @@ function generateNewsletterContent(sessions, categorizedSessions, dateRange) {
     education: '📚 Learning & Education',
     future: '🚀 Future & Innovation',
     linkedin: '💼 LinkedIn Professional Insights',
+    linkedin_newsletter: '📰 Curated LinkedIn Posts',
     other: '📝 Other Insights'
   };
   

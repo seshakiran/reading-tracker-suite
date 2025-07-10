@@ -439,26 +439,31 @@ class ReadingTracker {
   }
   
   setupLinkedInEventListeners() {
-    console.log('Reading Tracker: Setting up LinkedIn-specific listeners...');
+    console.log('Reading Tracker: Setting up LinkedIn manual newsletter curation...');
     
-    // Listen for save button clicks
+    // Inject "Add to Newsletter" buttons into visible posts
+    this.injectNewsletterButtons();
+    
+    // Listen for post interactions and new content loading
     document.addEventListener('click', (event) => {
       const target = event.target;
+      console.log('Reading Tracker: Click detected on:', target, target.className);
       
-      // Check if save button was clicked
-      if (this.isSaveButton(target)) {
-        console.log('Reading Tracker: LinkedIn save detected');
-        this.handleLinkedInSave(target);
-      }
-      
-      // Check if post was clicked for detailed view
-      if (this.isPostClick(target)) {
-        console.log('Reading Tracker: LinkedIn post click detected');
-        this.handleLinkedInPostClick(target);
+      // Check if our custom "Add to Newsletter" button was clicked
+      if (target.classList.contains('rt-add-to-newsletter-btn') || 
+          target.closest('.rt-add-to-newsletter-btn')) {
+        console.log('Reading Tracker: Manual newsletter addition requested');
+        event.preventDefault();
+        event.stopPropagation();
+        
+        const button = target.classList.contains('rt-add-to-newsletter-btn') ? 
+                      target : target.closest('.rt-add-to-newsletter-btn');
+        this.handleManualNewsletterAdd(button);
+        return;
       }
     }, true);
     
-    // Listen for URL changes (LinkedIn is a SPA)
+    // Listen for URL changes and new content (LinkedIn is a SPA)
     let lastUrl = window.location.href;
     const checkUrlChange = () => {
       const currentUrl = window.location.href;
@@ -466,89 +471,293 @@ class ReadingTracker {
         console.log('Reading Tracker: LinkedIn URL changed', { from: lastUrl, to: currentUrl });
         lastUrl = currentUrl;
         
-        // Re-analyze content when URL changes
+        // Re-inject buttons when content changes
         setTimeout(() => {
-          this.handleLinkedInNavigation();
+          this.injectNewsletterButtons();
         }, 1000); // Wait for content to load
       }
     };
     
-    // Check for URL changes every 500ms (LinkedIn navigation)
-    setInterval(checkUrlChange, 500);
+    // Check for URL changes and new posts every 2 seconds
+    setInterval(() => {
+      checkUrlChange();
+      this.injectNewsletterButtons(); // Continuously inject for new posts
+    }, 2000);
   }
   
-  isSaveButton(element) {
-    // Check if the clicked element or its parents contain save indicators
-    let current = element;
-    for (let i = 0; i < 5 && current; i++) {
-      const text = current.textContent?.toLowerCase() || '';
-      const ariaLabel = current.getAttribute('aria-label')?.toLowerCase() || '';
-      const className = current.className?.toLowerCase() || '';
-      
-      if (text.includes('save') || 
-          ariaLabel.includes('save') || 
-          className.includes('save') ||
-          current.querySelector('[aria-label*="save" i]')) {
-        return true;
-      }
-      current = current.parentElement;
-    }
-    return false;
-  }
-  
-  isPostClick(element) {
-    // Check if clicking on a post to view details, but exclude certain UI elements
-    let current = element;
-    
-    // Don't trigger on these specific UI elements
-    const excludeSelectors = [
-      'button', 'a[href]', '.see-more', '.see-less', 
-      '[aria-label*="menu"]', '[aria-label*="options"]',
-      '.feed-shared-actor', '.feed-shared-control-menu'
+  injectNewsletterButtons() {
+    // Find all LinkedIn posts that don't already have our button
+    const postSelectors = [
+      '[data-urn*="urn:li:activity"].feed-shared-update-v2',
+      '[data-urn*="urn:li:activity"].occludable-update',
+      '.feed-shared-update-v2[data-urn]',
+      '.occludable-update[data-urn]'
     ];
     
-    // Check if we clicked on an excluded element
-    for (const selector of excludeSelectors) {
-      if (current.matches && current.matches(selector)) {
-        return false;
+    let postsProcessed = 0;
+    
+    for (const selector of postSelectors) {
+      const posts = document.querySelectorAll(selector);
+      for (const post of posts) {
+        // Skip if already has our button
+        if (post.querySelector('.rt-add-to-newsletter-btn')) {
+          continue;
+        }
+        
+        // Find the post actions area (like, comment, share buttons)
+        const actionsArea = post.querySelector('.feed-shared-social-action-bar, .social-actions-buttons, .feed-shared-social-actions');
+        
+        if (actionsArea) {
+          this.addNewsletterButton(post, actionsArea);
+          postsProcessed++;
+        }
       }
     }
     
-    // Look for post containers within reasonable distance
-    for (let i = 0; i < 8 && current; i++) {
-      const className = current.className?.toLowerCase() || '';
-      
-      if (className.includes('feed-shared-update') || 
-          className.includes('occludable-update') ||
-          current.hasAttribute('data-urn') ||
-          current.querySelector('[data-urn]')) {
-        return true;
-      }
-      current = current.parentElement;
+    if (postsProcessed > 0) {
+      console.log(`Reading Tracker: Injected newsletter buttons into ${postsProcessed} LinkedIn posts`);
     }
-    return false;
   }
   
-  handleLinkedInSave(saveButton) {
-    // Find the associated post content
-    let postContainer = saveButton;
-    for (let i = 0; i < 10 && postContainer; i++) {
-      if (postContainer.querySelector('[data-urn]') || 
-          postContainer.className?.includes('feed-shared-update')) {
-        break;
-      }
-      postContainer = postContainer.parentElement;
-    }
+  addNewsletterButton(postContainer, actionsArea) {
+    console.log('Reading Tracker: Adding newsletter button to post:', postContainer);
     
-    if (postContainer) {
-      // Extract post content
-      const postContent = this.extractPostContent(postContainer);
-      if (postContent.wordCount > 20) {
-        console.log('Reading Tracker: Saving LinkedIn post for tracking', postContent);
-        this.saveLinkedInInteraction(postContent, 'saved');
+    // Create the "Add to Newsletter" button
+    const button = document.createElement('button');
+    button.className = 'rt-add-to-newsletter-btn';
+    button.type = 'button'; // Prevent form submission
+    button.innerHTML = `
+      <span class="rt-newsletter-icon">📰</span>
+      <span class="rt-newsletter-text">Add to Newsletter</span>
+    `;
+    
+    // Style the button to match LinkedIn's design
+    button.style.cssText = `
+      display: inline-flex !important;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 12px;
+      background: transparent;
+      border: 1px solid #0a66c2;
+      border-radius: 16px;
+      color: #0a66c2;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-left: 8px;
+      height: 32px;
+      position: relative;
+      z-index: 1000;
+    `;
+    
+    // Store reference to the post container
+    button.setAttribute('data-post-container', 'true');
+    button.postContainer = postContainer;
+    
+    // Add direct click handler as backup
+    button.addEventListener('click', (e) => {
+      console.log('Reading Tracker: Direct button click handler triggered');
+      e.preventDefault();
+      e.stopPropagation();
+      this.handleManualNewsletterAdd(button);
+    });
+    
+    // Add hover effects
+    button.addEventListener('mouseenter', () => {
+      if (!button.disabled) {
+        button.style.background = '#0a66c2';
+        button.style.color = 'white';
       }
+    });
+    
+    button.addEventListener('mouseleave', () => {
+      if (!button.disabled) {
+        button.style.background = 'transparent';
+        button.style.color = '#0a66c2';
+      }
+    });
+    
+    // Insert the button into the actions area
+    try {
+      actionsArea.appendChild(button);
+      console.log('Reading Tracker: Newsletter button successfully added');
+    } catch (error) {
+      console.error('Reading Tracker: Error adding button:', error);
     }
   }
+  
+  async handleManualNewsletterAdd(button) {
+    console.log('Reading Tracker: handleManualNewsletterAdd called with button:', button);
+    
+    // Handle manual addition to newsletter
+    const postContainer = button.postContainer;
+    
+    if (!postContainer) {
+      console.error('Reading Tracker: Could not find post container for newsletter addition');
+      this.showNotification('Error: Could not find post content', 'error');
+      return;
+    }
+    
+    console.log('Reading Tracker: Found post container:', postContainer);
+    
+    // Update button immediately to show it's processing
+    button.innerHTML = `
+      <span class="rt-newsletter-icon">⏳</span>
+      <span class="rt-newsletter-text">Adding...</span>
+    `;
+    button.disabled = true;
+    
+    try {
+      // Extract post content
+      const postContent = this.extractPostContent(postContainer);
+      console.log('Reading Tracker: Extracted content:', postContent);
+      
+      if (postContent.wordCount < 10) {
+        console.log('Reading Tracker: Post too short for newsletter');
+        this.showNotification('Post too short for newsletter', 'error');
+        
+        // Reset button
+        button.innerHTML = `
+          <span class="rt-newsletter-icon">📰</span>
+          <span class="rt-newsletter-text">Add to Newsletter</span>
+        `;
+        button.disabled = false;
+        return;
+      }
+      
+      // Save as newsletter item with special flag
+      const success = await this.saveLinkedInNewsletterItem(postContent);
+      
+      if (success) {
+        // Update button state to success
+        button.innerHTML = `
+          <span class="rt-newsletter-icon">✅</span>
+          <span class="rt-newsletter-text">Added!</span>
+        `;
+        button.style.background = '#057642';
+        button.style.color = 'white';
+        button.style.borderColor = '#057642';
+        
+        // Show success notification
+        this.showNotification('Added to newsletter queue!', 'success');
+      } else {
+        // Handle error
+        this.showNotification('Failed to add to newsletter', 'error');
+        
+        // Reset button
+        button.innerHTML = `
+          <span class="rt-newsletter-icon">📰</span>
+          <span class="rt-newsletter-text">Add to Newsletter</span>
+        `;
+        button.disabled = false;
+        button.style.background = 'transparent';
+        button.style.color = '#0a66c2';
+        button.style.borderColor = '#0a66c2';
+      }
+    } catch (error) {
+      console.error('Reading Tracker: Error in handleManualNewsletterAdd:', error);
+      this.showNotification('Error adding to newsletter', 'error');
+      
+      // Reset button
+      button.innerHTML = `
+        <span class="rt-newsletter-icon">📰</span>
+        <span class="rt-newsletter-text">Add to Newsletter</span>
+      `;
+      button.disabled = false;
+      button.style.background = 'transparent';
+      button.style.color = '#0a66c2';
+      button.style.borderColor = '#0a66c2';
+    }
+  }
+  
+  async saveLinkedInNewsletterItem(postContent) {
+    // Save LinkedIn post specifically for newsletter curation
+    try {
+      const session = {
+        title: postContent.title,
+        url: postContent.url,
+        content_type: 'linkedin_newsletter', // Special type for newsletter items
+        reading_time: 2, // Default reading time
+        word_count: postContent.wordCount,
+        excerpt: postContent.content, // Store full content
+        notes: `Newsletter Curation - ${postContent.author}${postContent.links && postContent.links.length > 0 ? '\n\nLinks:\n' + postContent.links.map(link => `• ${link.text}: ${link.url}`).join('\n') : ''}`,
+        learning_score: 75, // Higher score for manually curated content
+        category: 'linkedin_newsletter', // Special category for newsletter queue
+        timestamp: new Date().toISOString()
+      };
+      
+      console.log('Reading Tracker: Saving LinkedIn newsletter item', session);
+      
+      const response = await fetch('http://localhost:3001/api/sessions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(session),
+      });
+      
+      if (response.ok) {
+        console.log('Reading Tracker: LinkedIn newsletter item saved successfully');
+        return true;
+      } else {
+        console.error('Reading Tracker: Failed to save LinkedIn newsletter item');
+        return false;
+      }
+    } catch (error) {
+      console.error('Reading Tracker: Error saving LinkedIn newsletter item:', error);
+      return false;
+    }
+  }
+  
+  showNotification(message, type = 'success') {
+    // Show a brief notification message
+    const notification = document.createElement('div');
+    notification.className = 'rt-notification';
+    notification.innerHTML = `
+      <div style="
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        background: ${type === 'success' ? '#057642' : '#dc2626'};
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 10000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        animation: rtSlideIn 0.3s ease-out;
+        max-width: 300px;
+      ">
+        ${type === 'success' ? '✅' : '❌'} ${message}
+      </div>
+      <style>
+        @keyframes rtSlideIn {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes rtSlideOut {
+          from { transform: translateX(0); opacity: 1; }
+          to { transform: translateX(100%); opacity: 0; }
+        }
+      </style>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      notification.style.animation = 'rtSlideOut 0.3s ease-in';
+      setTimeout(() => {
+        if (notification.parentElement) {
+          notification.remove();
+        }
+      }, 300);
+    }, 3000);
+  }
+  
+  // Old automatic tracking methods removed - now using manual curation only
   
   findLinkedInPostContainer(clickedElement) {
     // Find the actual LinkedIn post container from any clicked element within it
@@ -612,42 +821,7 @@ class ReadingTracker {
     return null;
   }
   
-  handleLinkedInPostClick(clickedElement) {
-    // Find the actual post container from the clicked element
-    const postContainer = this.findLinkedInPostContainer(clickedElement);
-    
-    if (!postContainer) {
-      console.log('Reading Tracker: Could not find post container from clicked element');
-      return;
-    }
-    
-    // Extract content from the post container
-    const postContent = this.extractPostContent(postContainer);
-    console.log('Reading Tracker: Extracted post content for click:', {
-      wordCount: postContent.wordCount,
-      title: postContent.title,
-      contentPreview: postContent.content.substring(0, 100)
-    });
-    
-    if (postContent.wordCount > 20) {
-      console.log('Reading Tracker: LinkedIn post clicked for tracking - saving interaction');
-      // Save the clicked post and start reading session
-      this.saveLinkedInInteraction(postContent, 'clicked');
-      this.startReading();
-    } else {
-      console.log('Reading Tracker: LinkedIn post too short to track (minimum 20 words)');
-    }
-  }
-  
-  handleLinkedInNavigation() {
-    // Re-run content analysis when navigating within LinkedIn
-    if (this.isLinkedInContent()) {
-      console.log('Reading Tracker: Re-analyzing LinkedIn content after navigation');
-      setTimeout(() => {
-        this.extractContentWithRetries();
-      }, 500);
-    }
-  }
+  // Automatic tracking methods removed - using manual button-based curation
   
   extractPostContent(postContainer) {
     console.log('Reading Tracker: Extracting post content from container:', postContainer);
@@ -920,79 +1094,7 @@ class ReadingTracker {
     return links;
   }
   
-  async saveLinkedInInteraction(postContent, interactionType) {
-    // Save LinkedIn interaction (save, click) as a reading session
-    try {
-      const session = {
-        title: postContent.title,
-        url: postContent.url,
-        content_type: 'linkedin',
-        reading_time: interactionType === 'saved' ? 2 : 1, // Assume 2 min for saved, 1 min for clicked
-        word_count: postContent.wordCount,
-        excerpt: postContent.content, // Store full content instead of truncated excerpt
-        notes: `LinkedIn ${interactionType} - ${postContent.author}${postContent.links && postContent.links.length > 0 ? '\n\nLinks:\n' + postContent.links.map(link => `• ${link.text}: ${link.url}`).join('\n') : ''}`,
-        learning_score: 50, // Default score for LinkedIn interactions
-        category: 'linkedin', // Dedicated LinkedIn category
-        timestamp: new Date().toISOString()
-      };
-      
-      console.log('Reading Tracker: Saving LinkedIn interaction session', session);
-      
-      const response = await fetch('http://localhost:3001/api/sessions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(session),
-      });
-      
-      if (response.ok) {
-        console.log('Reading Tracker: LinkedIn interaction saved successfully');
-        // Show success notification
-        this.showLinkedInSaveSuccess(interactionType);
-      } else {
-        console.error('Reading Tracker: Failed to save LinkedIn interaction');
-      }
-    } catch (error) {
-      console.error('Reading Tracker: Error saving LinkedIn interaction:', error);
-    }
-  }
-  
-  showLinkedInSaveSuccess(interactionType) {
-    // Show a brief success message for LinkedIn saves
-    const message = document.createElement('div');
-    message.innerHTML = `
-      <div style="
-        position: fixed;
-        top: 80px;
-        right: 20px;
-        background: #0073b1;
-        color: white;
-        padding: 8px 16px;
-        border-radius: 6px;
-        font-size: 12px;
-        z-index: 10000;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        animation: fadeInOut 3s ease-in-out;
-      ">
-        📚 Post ${interactionType} to Reading Tracker
-      </div>
-      <style>
-        @keyframes fadeInOut {
-          0%, 100% { opacity: 0; transform: translateX(100%); }
-          15%, 85% { opacity: 1; transform: translateX(0); }
-        }
-      </style>
-    `;
-    
-    document.body.appendChild(message);
-    
-    setTimeout(() => {
-      if (message.parentElement) {
-        message.remove();
-      }
-    }, 3000);
-  }
+  // Old automatic tracking methods removed - replaced with manual newsletter curation
   
   startTracking() {
     // Check for inactivity every 5 seconds

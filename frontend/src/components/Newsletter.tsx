@@ -300,6 +300,7 @@ const Newsletter: React.FC = () => {
               <option value="education">Education</option>
               <option value="future">Future</option>
               <option value="linkedin">LinkedIn Only</option>
+              <option value="linkedin_newsletter">Curated LinkedIn Posts</option>
             </select>
           </div>
         </div>
