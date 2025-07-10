@@ -48,6 +48,13 @@ class UniversalContentAnalyzer {
         'automation', 'robotics', 'space technology', 'renewable energy',
         'sustainability', 'breakthrough', 'advancement', 'revolution',
         'transformation', 'next generation', 'cutting edge', 'pioneering'
+      ],
+      
+      linkedin: [
+        'professional development', 'networking', 'career advice', 'industry insights',
+        'thought leadership', 'professional growth', 'workplace culture', 
+        'job market', 'recruitment', 'personal branding', 'professional tips',
+        'industry trends', 'business networking', 'career opportunities'
       ]
     };
     

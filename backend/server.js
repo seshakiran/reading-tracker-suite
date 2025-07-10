@@ -204,9 +204,9 @@ app.delete('/api/reset', (req, res) => {
 // Newsletter generation endpoint
 app.post('/api/newsletter/generate', async (req, res) => {
   try {
-    const { dateRange = 7, includeCategories = ['all'], excludeLowScore = true, minScore = 50 } = req.body;
+    const { dateRange = 7, includeCategories = ['all'], excludeLowScore = true, minScore = 50, excludeLinkedIn = false } = req.body;
     
-    console.log('Generating newsletter with params:', { dateRange, includeCategories, excludeLowScore, minScore });
+    console.log('Generating newsletter with params:', { dateRange, includeCategories, excludeLowScore, minScore, excludeLinkedIn });
     
     // Get reading sessions from the specified date range
     let dateFrom, dateTo;
@@ -249,6 +249,11 @@ app.post('/api/newsletter/generate', async (req, res) => {
     if (excludeLowScore) {
       sql += ` AND rs.learning_score >= ?`;
       params.push(minScore);
+    }
+    
+    // Add LinkedIn exclusion filter
+    if (excludeLinkedIn && includeCategories.includes('all')) {
+      sql += ` AND rs.category != 'linkedin'`;
     }
     
     sql += ` GROUP BY rs.id ORDER BY rs.learning_score DESC, rs.created_at DESC`;
@@ -333,6 +338,7 @@ function generateNewsletterContent(sessions, categorizedSessions, dateRange) {
     business: '💼 Business & Strategy',
     education: '📚 Learning & Education',
     future: '🚀 Future & Innovation',
+    linkedin: '💼 LinkedIn Professional Insights',
     other: '📝 Other Insights'
   };
   

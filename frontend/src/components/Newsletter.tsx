@@ -50,6 +50,7 @@ const Newsletter: React.FC = () => {
   const [includeCategories, setIncludeCategories] = useState(['all']);
   const [excludeLowScore, setExcludeLowScore] = useState(false);
   const [minScore, setMinScore] = useState(30);
+  const [excludeLinkedIn, setExcludeLinkedIn] = useState(true); // Default to excluding LinkedIn
 
   const generateNewsletter = async () => {
     setLoading(true);
@@ -65,7 +66,8 @@ const Newsletter: React.FC = () => {
           dateRange,
           includeCategories,
           excludeLowScore,
-          minScore
+          minScore,
+          excludeLinkedIn
         }),
       });
       
@@ -297,9 +299,27 @@ const Newsletter: React.FC = () => {
               <option value="science">Science</option>
               <option value="education">Education</option>
               <option value="future">Future</option>
+              <option value="linkedin">LinkedIn Only</option>
             </select>
           </div>
         </div>
+        
+        {/* LinkedIn Exclusion Option */}
+        {includeCategories[0] === 'all' && (
+          <div className="mt-4">
+            <label className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                checked={excludeLinkedIn}
+                onChange={(e) => setExcludeLinkedIn(e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-sm text-gray-700">
+                Exclude LinkedIn posts from newsletter (recommended for manual curation)
+              </span>
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Error Message */}
