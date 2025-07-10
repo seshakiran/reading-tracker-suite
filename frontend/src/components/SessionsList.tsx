@@ -123,9 +123,9 @@ const SessionsList: React.FC = () => {
             <div className="flex items-start justify-between">
               <div className="flex-1 min-w-0">
                 {/* Title and URL */}
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-lg">{getContentTypeIcon(session.content_type)}</span>
-                  <h3 className="text-lg font-semibold text-gray-900 truncate">
+                <div className="flex items-start gap-2 mb-2">
+                  <span className="text-lg flex-shrink-0">{getContentTypeIcon(session.content_type)}</span>
+                  <h3 className="text-lg font-semibold text-gray-900 break-anywhere flex-1 min-w-0">
                     {session.title}
                   </h3>
                   {session.url && (
@@ -142,7 +142,7 @@ const SessionsList: React.FC = () => {
 
                 {/* URL */}
                 {session.url && (
-                  <p className="text-sm text-gray-600 mb-3 truncate">
+                  <p className="text-sm text-gray-600 mb-3 break-anywhere">
                     {session.url}
                   </p>
                 )}
@@ -179,20 +179,20 @@ const SessionsList: React.FC = () => {
                 )}
 
                 {/* Stats Row */}
-                <div className="flex items-center gap-4 text-sm text-gray-600">
-                  <div className="flex items-center gap-1">
+                <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+                  <div className="flex items-center gap-1 flex-shrink-0">
                     <Clock className="h-4 w-4" />
                     <span>{formatTime(session.reading_time)}</span>
                   </div>
                   
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 flex-shrink-0">
                     <BookOpen className="h-4 w-4" />
                     <span>{session.word_count.toLocaleString()} words</span>
                   </div>
                   
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 flex-shrink-0">
                     <Calendar className="h-4 w-4" />
-                    <span>{formatDate(session.created_at)}</span>
+                    <span className="break-anywhere">{formatDate(session.created_at)}</span>
                   </div>
                 </div>
               </div>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Mail, Download, Settings, Calendar, Target, Filter, Copy } from 'lucide-react';
+import { Mail, Download, Settings, Calendar, Target, Filter, Copy, Trash2 } from 'lucide-react';
 
 interface NewsletterItem {
   title: string;
@@ -10,6 +10,7 @@ interface NewsletterItem {
   tags: string[];
   date: string;
   category: string;
+  id?: string;
 }
 
 interface NewsletterSection {
@@ -122,6 +123,37 @@ const Newsletter: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to copy: ', err);
+    }
+  };
+
+  const deleteNewsletterItem = (sectionIndex: number, itemIndex: number) => {
+    if (!newsletter) return;
+    
+    const updatedNewsletter = { ...newsletter };
+    updatedNewsletter.sections = [...newsletter.sections];
+    updatedNewsletter.sections[sectionIndex] = {
+      ...newsletter.sections[sectionIndex],
+      items: newsletter.sections[sectionIndex].items.filter((_, index) => index !== itemIndex)
+    };
+    
+    // Remove empty sections
+    updatedNewsletter.sections = updatedNewsletter.sections.filter(section => section.items.length > 0);
+    
+    // Update footer counts
+    const totalItems = updatedNewsletter.sections.reduce((count, section) => count + section.items.length, 0);
+    updatedNewsletter.footer = {
+      ...newsletter.footer,
+      totalArticles: totalItems
+    };
+    
+    setNewsletter(updatedNewsletter);
+    
+    // Update stats
+    if (stats) {
+      setStats({
+        ...stats,
+        totalSessions: totalItems
+      });
     }
   };
 
@@ -346,7 +378,7 @@ const Newsletter: React.FC = () => {
                 {section.items.map((item, itemIndex) => (
                   <div
                     key={itemIndex}
-                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors group"
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -378,6 +410,15 @@ const Newsletter: React.FC = () => {
                             </div>
                           )}
                         </div>
+                      </div>
+                      <div className="ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => deleteNewsletterItem(sectionIndex, itemIndex)}
+                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Remove from newsletter"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </div>
                   </div>

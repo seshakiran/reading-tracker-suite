@@ -76,6 +76,13 @@ class ReadingTracker {
   }
   
   isArticlePage() {
+    const url = window.location.href.toLowerCase();
+    
+    // Special handling for LinkedIn
+    if (url.includes('linkedin.com')) {
+      return this.isLinkedInContent();
+    }
+    
     // Heuristic to determine if this is readable content (articles, product pages, docs)
     const indicators = [
       // Traditional content
@@ -93,7 +100,6 @@ class ReadingTracker {
       'model', 'llm', 'gpt', 'neural', 'algorithm', 'dataset'
     ];
     
-    const url = window.location.href.toLowerCase();
     const title = document.title.toLowerCase();
     const bodyText = document.body.innerText.toLowerCase();
     
@@ -121,7 +127,167 @@ class ReadingTracker {
     return wordCount > 150; // Reduced threshold for product pages
   }
   
+  isLinkedInContent() {
+    const url = window.location.href.toLowerCase();
+    
+    // LinkedIn article URLs
+    if (url.includes('/pulse/') || url.includes('/posts/')) {
+      return true;
+    }
+    
+    // LinkedIn feed posts (when focused on a specific post)
+    if (url.includes('/feed/update/') || url.includes('activity-')) {
+      return true;
+    }
+    
+    // Check if there's a substantial LinkedIn post visible
+    const linkedInPost = document.querySelector('[data-urn*="urn:li:activity"], .feed-shared-update-v2, .occludable-update');
+    if (linkedInPost) {
+      const postText = linkedInPost.innerText || linkedInPost.textContent || '';
+      const wordCount = postText.split(/\s+/).filter(word => word.length > 0).length;
+      return wordCount > 50; // Minimum words for a substantial LinkedIn post
+    }
+    
+    return false;
+  }
+  
+  extractLinkedInContent() {
+    const url = window.location.href.toLowerCase();
+    let mainContent = null;
+    let selectedSelector = 'none';
+    
+    console.log('Reading Tracker: Extracting LinkedIn content...');
+    
+    // LinkedIn-specific content selectors
+    const linkedInSelectors = [
+      // LinkedIn articles (Pulse)
+      '.article-content',
+      '.reader-article-content',
+      '[data-module-id="article-body"]',
+      
+      // LinkedIn posts
+      '.feed-shared-update-v2__commentary',
+      '.feed-shared-text',
+      '.update-components-text',
+      '.feed-shared-text .break-words',
+      
+      // Individual post view
+      '.feed-shared-update-v2',
+      '[data-urn*="urn:li:activity"]',
+      '.occludable-update',
+      
+      // Shared articles in posts
+      '.feed-shared-article',
+      '.feed-shared-external-article__description',
+      
+      // General LinkedIn content
+      '.core-rail',
+      '.scaffold-layout__content'
+    ];
+    
+    // Try LinkedIn-specific selectors first
+    for (const selector of linkedInSelectors) {
+      const elements = document.querySelectorAll(selector);
+      for (const element of elements) {
+        const text = element.innerText || element.textContent || '';
+        const wordCount = text.split(/\s+/).filter(word => word.length > 0).length;
+        
+        // Find the element with the most substantial content
+        if (wordCount > 20 && (!mainContent || wordCount > this.wordCount)) {
+          mainContent = element;
+          selectedSelector = selector;
+          break;
+        }
+      }
+      if (mainContent) break;
+    }
+    
+    // If no specific content found, try to get the main post content
+    if (!mainContent) {
+      // Look for any post with substantial content
+      const posts = document.querySelectorAll('[data-urn], .feed-shared-update-v2, .occludable-update');
+      for (const post of posts) {
+        const text = post.innerText || post.textContent || '';
+        const wordCount = text.split(/\s+/).filter(word => word.length > 0).length;
+        if (wordCount > 50) {
+          mainContent = post;
+          selectedSelector = 'linkedin-post-fallback';
+          break;
+        }
+      }
+    }
+    
+    // Final fallback to main content area
+    if (!mainContent) {
+      const mainArea = document.querySelector('main, #main, .scaffold-layout__content');
+      if (mainArea) {
+        mainContent = mainArea;
+        selectedSelector = 'linkedin-main-fallback';
+      }
+    }
+    
+    if (!mainContent) {
+      mainContent = document.body;
+      selectedSelector = 'document.body (fallback)';
+    }
+    
+    // Extract and clean the text
+    let text = mainContent.innerText || mainContent.textContent || '';
+    
+    // Clean LinkedIn-specific noise
+    text = this.cleanLinkedInText(text);
+    
+    this.wordCount = text.split(/\s+/).filter(word => word.length > 0).length;
+    this.mainContent = mainContent;
+    
+    console.log(`Reading Tracker: LinkedIn content extraction:`, {
+      selectedSelector,
+      textLength: text.length,
+      wordCount: this.wordCount,
+      firstFewWords: text.substring(0, 100),
+      url: window.location.href
+    });
+    
+    console.log(`Reading Tracker: Detected ${this.wordCount} words`);
+  }
+  
+  cleanLinkedInText(text) {
+    // Remove LinkedIn UI noise with enhanced cleaning
+    const cleanText = text
+      // Remove timestamps and metadata
+      .replace(/\d+[dhms]\s*(ago|hours?|minutes?|days?|weeks?|months?)/gi, '')
+      .replace(/\d+[,\d]*\s*(likes?|comments?|shares?|reactions?|views?)/gi, '')
+      // Remove action buttons text
+      .replace(/\b(like|comment|share|send|follow|connect|repost|celebrate)\b/gi, '')
+      // Remove LinkedIn navigation and UI elements
+      .replace(/\b(home|my network|jobs|messaging|notifications|premium|try premium)\b/gi, '')
+      // Remove profile actions
+      .replace(/\b(see more|see less|show more|show less|…see more|load more)\b/gi, '')
+      // Remove engagement prompts
+      .replace(/\b(what do you think|thoughts\?|agree\?|disagree\?)\b/gi, '')
+      // Remove LinkedIn-specific elements
+      .replace(/\b(promoted|sponsored|linkedin member|connection|1st|2nd|3rd)\b/gi, '')
+      // Remove hashtag-only lines
+      .replace(/^#\w+\s*$/gm, '')
+      // Remove excessive hashtags at the end
+      .replace(/(#\w+\s*){3,}$/g, '')
+      // Clean multiple spaces, tabs, and newlines
+      .replace(/[\s\t\r\n]+/g, ' ')
+      // Remove leading/trailing whitespace and punctuation
+      .replace(/^[\s.,;:!?-]+|[\s.,;:!?-]+$/g, '')
+      .trim();
+    
+    return cleanText;
+  }
+  
   extractContent() {
+    const url = window.location.href.toLowerCase();
+    
+    // Special LinkedIn content extraction
+    if (url.includes('linkedin.com')) {
+      return this.extractLinkedInContent();
+    }
+    
     // Extract main content and word count
     const contentSelectors = [
       // Traditional article selectors
@@ -230,6 +396,497 @@ class ReadingTracker {
     window.addEventListener('beforeunload', () => {
       this.saveReadingSession();
     });
+    
+    // LinkedIn-specific event listeners
+    if (window.location.href.toLowerCase().includes('linkedin.com')) {
+      this.setupLinkedInEventListeners();
+    }
+  }
+  
+  setupLinkedInEventListeners() {
+    console.log('Reading Tracker: Setting up LinkedIn-specific listeners...');
+    
+    // Listen for save button clicks
+    document.addEventListener('click', (event) => {
+      const target = event.target;
+      
+      // Check if save button was clicked
+      if (this.isSaveButton(target)) {
+        console.log('Reading Tracker: LinkedIn save detected');
+        this.handleLinkedInSave(target);
+      }
+      
+      // Check if post was clicked for detailed view
+      if (this.isPostClick(target)) {
+        console.log('Reading Tracker: LinkedIn post click detected');
+        this.handleLinkedInPostClick(target);
+      }
+    }, true);
+    
+    // Listen for URL changes (LinkedIn is a SPA)
+    let lastUrl = window.location.href;
+    const checkUrlChange = () => {
+      const currentUrl = window.location.href;
+      if (currentUrl !== lastUrl) {
+        console.log('Reading Tracker: LinkedIn URL changed', { from: lastUrl, to: currentUrl });
+        lastUrl = currentUrl;
+        
+        // Re-analyze content when URL changes
+        setTimeout(() => {
+          this.handleLinkedInNavigation();
+        }, 1000); // Wait for content to load
+      }
+    };
+    
+    // Check for URL changes every 500ms (LinkedIn navigation)
+    setInterval(checkUrlChange, 500);
+  }
+  
+  isSaveButton(element) {
+    // Check if the clicked element or its parents contain save indicators
+    let current = element;
+    for (let i = 0; i < 5 && current; i++) {
+      const text = current.textContent?.toLowerCase() || '';
+      const ariaLabel = current.getAttribute('aria-label')?.toLowerCase() || '';
+      const className = current.className?.toLowerCase() || '';
+      
+      if (text.includes('save') || 
+          ariaLabel.includes('save') || 
+          className.includes('save') ||
+          current.querySelector('[aria-label*="save" i]')) {
+        return true;
+      }
+      current = current.parentElement;
+    }
+    return false;
+  }
+  
+  isPostClick(element) {
+    // Check if clicking on a post to view details, but exclude certain UI elements
+    let current = element;
+    
+    // Don't trigger on these specific UI elements
+    const excludeSelectors = [
+      'button', 'a[href]', '.see-more', '.see-less', 
+      '[aria-label*="menu"]', '[aria-label*="options"]',
+      '.feed-shared-actor', '.feed-shared-control-menu'
+    ];
+    
+    // Check if we clicked on an excluded element
+    for (const selector of excludeSelectors) {
+      if (current.matches && current.matches(selector)) {
+        return false;
+      }
+    }
+    
+    // Look for post containers within reasonable distance
+    for (let i = 0; i < 8 && current; i++) {
+      const className = current.className?.toLowerCase() || '';
+      
+      if (className.includes('feed-shared-update') || 
+          className.includes('occludable-update') ||
+          current.hasAttribute('data-urn') ||
+          current.querySelector('[data-urn]')) {
+        return true;
+      }
+      current = current.parentElement;
+    }
+    return false;
+  }
+  
+  handleLinkedInSave(saveButton) {
+    // Find the associated post content
+    let postContainer = saveButton;
+    for (let i = 0; i < 10 && postContainer; i++) {
+      if (postContainer.querySelector('[data-urn]') || 
+          postContainer.className?.includes('feed-shared-update')) {
+        break;
+      }
+      postContainer = postContainer.parentElement;
+    }
+    
+    if (postContainer) {
+      // Extract post content
+      const postContent = this.extractPostContent(postContainer);
+      if (postContent.wordCount > 20) {
+        console.log('Reading Tracker: Saving LinkedIn post for tracking', postContent);
+        this.saveLinkedInInteraction(postContent, 'saved');
+      }
+    }
+  }
+  
+  findLinkedInPostContainer(clickedElement) {
+    // Find the actual LinkedIn post container from any clicked element within it
+    console.log('Reading Tracker: Finding post container from clicked element:', clickedElement);
+    
+    let current = clickedElement;
+    
+    // First, try to find the post container by going up the DOM tree
+    for (let i = 0; i < 15 && current; i++) {
+      const className = current.className?.toLowerCase() || '';
+      
+      // Look for main post container classes
+      if (className.includes('feed-shared-update-v2') || 
+          className.includes('occludable-update') ||
+          current.hasAttribute('data-urn')) {
+        console.log(`Reading Tracker: Found post container via DOM traversal (${i} levels up):`, current);
+        return current;
+      }
+      
+      current = current.parentElement;
+    }
+    
+    // If DOM traversal didn't work, try to find visible posts on the page
+    const postSelectors = [
+      '[data-urn*="urn:li:activity"]',
+      '.feed-shared-update-v2',
+      '.occludable-update'
+    ];
+    
+    for (const selector of postSelectors) {
+      const posts = document.querySelectorAll(selector);
+      for (const post of posts) {
+        // Check if the clicked element is within this post
+        if (post.contains(clickedElement)) {
+          console.log(`Reading Tracker: Found post container via selector "${selector}":`, post);
+          return post;
+        }
+      }
+    }
+    
+    // Final fallback: look for any element with substantial text content around the click
+    const nearbyElements = document.querySelectorAll('.feed-shared-update-v2, [data-urn], .occludable-update');
+    for (const element of nearbyElements) {
+      const rect = element.getBoundingClientRect();
+      const clickRect = clickedElement.getBoundingClientRect();
+      
+      // Check if the clicked element is visually within this post
+      if (rect.top <= clickRect.top && rect.bottom >= clickRect.bottom &&
+          rect.left <= clickRect.left && rect.right >= clickRect.right) {
+        console.log('Reading Tracker: Found post container via visual bounds:', element);
+        return element;
+      }
+    }
+    
+    console.log('Reading Tracker: Could not find post container');
+    return null;
+  }
+  
+  handleLinkedInPostClick(clickedElement) {
+    // Find the actual post container from the clicked element
+    const postContainer = this.findLinkedInPostContainer(clickedElement);
+    
+    if (!postContainer) {
+      console.log('Reading Tracker: Could not find post container from clicked element');
+      return;
+    }
+    
+    // Extract content from the post container
+    const postContent = this.extractPostContent(postContainer);
+    console.log('Reading Tracker: Extracted post content for click:', {
+      wordCount: postContent.wordCount,
+      title: postContent.title,
+      contentPreview: postContent.content.substring(0, 100)
+    });
+    
+    if (postContent.wordCount > 20) {
+      console.log('Reading Tracker: LinkedIn post clicked for tracking - saving interaction');
+      // Save the clicked post and start reading session
+      this.saveLinkedInInteraction(postContent, 'clicked');
+      this.startReading();
+    } else {
+      console.log('Reading Tracker: LinkedIn post too short to track (minimum 20 words)');
+    }
+  }
+  
+  handleLinkedInNavigation() {
+    // Re-run content analysis when navigating within LinkedIn
+    if (this.isLinkedInContent()) {
+      console.log('Reading Tracker: Re-analyzing LinkedIn content after navigation');
+      setTimeout(() => {
+        this.extractContentWithRetries();
+      }, 500);
+    }
+  }
+  
+  extractPostContent(postContainer) {
+    console.log('Reading Tracker: Extracting post content from container:', postContainer);
+    
+    // Extract content from a specific LinkedIn post with enhanced selectors
+    const contentSelectors = [
+      // Main post text content
+      '.feed-shared-update-v2__commentary .break-words span[dir="ltr"]',
+      '.feed-shared-update-v2__commentary .break-words',
+      '.feed-shared-update-v2__commentary',
+      '.feed-shared-text .break-words span[dir="ltr"]',
+      '.feed-shared-text .break-words',
+      '.feed-shared-text',
+      '.update-components-text .break-words span[dir="ltr"]',
+      '.update-components-text .break-words',
+      '.update-components-text',
+      
+      // Article descriptions and shared content
+      '.feed-shared-article__description .break-words',
+      '.feed-shared-article__description',
+      '.feed-shared-external-article__description',
+      '.update-components-text__text-view',
+      '.feed-shared-update-v2__description-wrapper',
+      '.feed-shared-linkedin-video__description',
+      
+      // Fallback selectors
+      '[data-test-id="main-feed-activity-card__commentary"]',
+      '.feed-shared-update-v2 .break-words',
+      '.occludable-update .break-words'
+    ];
+    
+    let bestContent = '';
+    let bestWordCount = 0;
+    let bestSelector = '';
+    
+    // Try each selector and log what we find
+    for (const selector of contentSelectors) {
+      const elements = postContainer.querySelectorAll(selector);
+      
+      for (const element of elements) {
+        const text = element.innerText || element.textContent || '';
+        const cleanText = this.cleanLinkedInText(text);
+        const wordCount = cleanText.split(/\s+/).filter(word => word.length > 0).length;
+        
+        console.log(`Reading Tracker: Selector "${selector}" found ${wordCount} words:`, cleanText.substring(0, 100));
+        
+        if (wordCount > bestWordCount) {
+          bestContent = cleanText;
+          bestWordCount = wordCount;
+          bestSelector = selector;
+        }
+      }
+      
+      // If we found good content, break early
+      if (bestWordCount > 50) break;
+    }
+    
+    // Enhanced fallback: try to combine all text content selectors
+    if (bestWordCount < 20) {
+      console.log('Reading Tracker: Using enhanced fallback for text extraction');
+      
+      const allTextSelectors = [
+        '.feed-shared-update-v2__commentary',
+        '.feed-shared-text',
+        '.update-components-text',
+        '.feed-shared-article__description',
+        '.feed-shared-external-article__description'
+      ];
+      
+      let combinedText = '';
+      for (const selector of allTextSelectors) {
+        const elements = postContainer.querySelectorAll(selector);
+        for (const element of elements) {
+          const text = element.innerText || element.textContent || '';
+          if (text.trim() && !combinedText.includes(text.trim())) {
+            combinedText += ' ' + text.trim();
+          }
+        }
+      }
+      
+      if (combinedText.trim()) {
+        const cleanText = this.cleanLinkedInText(combinedText);
+        const wordCount = cleanText.split(/\s+/).filter(word => word.length > 0).length;
+        
+        if (wordCount > bestWordCount) {
+          bestContent = cleanText;
+          bestWordCount = wordCount;
+          bestSelector = 'combined-text-fallback';
+        }
+      }
+    }
+    
+    // Final fallback to full post content
+    if (bestWordCount < 10) {
+      console.log('Reading Tracker: Using final fallback - full post content');
+      const fullText = postContainer.innerText || postContainer.textContent || '';
+      const cleanText = this.cleanLinkedInText(fullText);
+      const wordCount = cleanText.split(/\s+/).filter(word => word.length > 0).length;
+      
+      if (wordCount > 5) {
+        bestContent = cleanText;
+        bestWordCount = wordCount;
+        bestSelector = 'full-post-final-fallback';
+      }
+    }
+    
+    // Get post author and title if available
+    const authorSelectors = [
+      '.feed-shared-actor__name .visually-hidden',
+      '.feed-shared-actor__name',
+      '.update-components-actor__name',
+      '.feed-shared-actor__title',
+      '[data-test-id="main-feed-activity-card__actor"]'
+    ];
+    
+    let author = 'LinkedIn User';
+    for (const selector of authorSelectors) {
+      const authorElement = postContainer.querySelector(selector);
+      if (authorElement && authorElement.textContent.trim()) {
+        author = authorElement.textContent.trim();
+        break;
+      }
+    }
+    
+    // Extract specific LinkedIn post URL instead of feed URL
+    const postUrl = this.extractLinkedInPostUrl(postContainer);
+    
+    const title = bestContent.length > 50 
+      ? bestContent.substring(0, 50) + '...' 
+      : bestContent || 'LinkedIn Post';
+    
+    const result = {
+      title: `${author}: ${title}`,
+      content: bestContent,
+      wordCount: bestWordCount,
+      url: postUrl || window.location.href,
+      author,
+      selector: bestSelector
+    };
+    
+    console.log('Reading Tracker: Final extracted content:', result);
+    return result;
+  }
+  
+  extractLinkedInPostUrl(postContainer) {
+    // Try to extract the specific LinkedIn post URL
+    console.log('Reading Tracker: Extracting LinkedIn post URL...');
+    
+    // Look for direct links to the post
+    const linkSelectors = [
+      'a[href*="/posts/"]',
+      'a[href*="/feed/update/"]',
+      'a[href*="activity-"]',
+      'a[href*="/pulse/"]',
+      '[data-urn] a[href*="linkedin.com"]'
+    ];
+    
+    for (const selector of linkSelectors) {
+      const linkElement = postContainer.querySelector(selector);
+      if (linkElement && linkElement.href) {
+        console.log(`Reading Tracker: Found post URL via ${selector}:`, linkElement.href);
+        return linkElement.href;
+      }
+    }
+    
+    // Try to extract from data attributes
+    const dataUrnElement = postContainer.querySelector('[data-urn]');
+    if (dataUrnElement) {
+      const urn = dataUrnElement.getAttribute('data-urn');
+      if (urn && urn.includes('activity:')) {
+        // Extract activity ID from URN like "urn:li:activity:1234567890"
+        const activityId = urn.split('activity:')[1];
+        if (activityId) {
+          const postUrl = `https://www.linkedin.com/posts/activity-${activityId}`;
+          console.log('Reading Tracker: Constructed post URL from URN:', postUrl);
+          return postUrl;
+        }
+      }
+    }
+    
+    // Try to find post permalink in the menu options
+    const menuButtons = postContainer.querySelectorAll('button[aria-label*="menu"], button[aria-label*="options"]');
+    for (const button of menuButtons) {
+      // Look for nearby elements that might contain the post URL
+      const parent = button.closest('[data-urn]');
+      if (parent) {
+        const links = parent.querySelectorAll('a[href*="posts"], a[href*="activity"]');
+        for (const link of links) {
+          if (link.href && link.href.includes('linkedin.com')) {
+            console.log('Reading Tracker: Found post URL via menu context:', link.href);
+            return link.href;
+          }
+        }
+      }
+    }
+    
+    // Check current URL if it's a specific post
+    const currentUrl = window.location.href;
+    if (currentUrl.includes('/posts/') || currentUrl.includes('/feed/update/') || currentUrl.includes('activity-')) {
+      console.log('Reading Tracker: Using current URL as post URL:', currentUrl);
+      return currentUrl;
+    }
+    
+    console.log('Reading Tracker: Could not extract specific post URL, using current page URL');
+    return null; // Will fall back to window.location.href
+  }
+  
+  async saveLinkedInInteraction(postContent, interactionType) {
+    // Save LinkedIn interaction (save, click) as a reading session
+    try {
+      const session = {
+        title: postContent.title,
+        url: postContent.url,
+        content_type: 'linkedin',
+        reading_time: interactionType === 'saved' ? 2 : 1, // Assume 2 min for saved, 1 min for clicked
+        word_count: postContent.wordCount,
+        excerpt: postContent.content.substring(0, 200),
+        notes: `LinkedIn ${interactionType} - ${postContent.author}`,
+        learning_score: 50, // Default score for LinkedIn interactions
+        category: 'business', // Default category for LinkedIn content
+        timestamp: new Date().toISOString()
+      };
+      
+      console.log('Reading Tracker: Saving LinkedIn interaction session', session);
+      
+      const response = await fetch('http://localhost:3001/api/sessions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(session),
+      });
+      
+      if (response.ok) {
+        console.log('Reading Tracker: LinkedIn interaction saved successfully');
+        // Show success notification
+        this.showLinkedInSaveSuccess(interactionType);
+      } else {
+        console.error('Reading Tracker: Failed to save LinkedIn interaction');
+      }
+    } catch (error) {
+      console.error('Reading Tracker: Error saving LinkedIn interaction:', error);
+    }
+  }
+  
+  showLinkedInSaveSuccess(interactionType) {
+    // Show a brief success message for LinkedIn saves
+    const message = document.createElement('div');
+    message.innerHTML = `
+      <div style="
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        background: #0073b1;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        z-index: 10000;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        animation: fadeInOut 3s ease-in-out;
+      ">
+        📚 Post ${interactionType} to Reading Tracker
+      </div>
+      <style>
+        @keyframes fadeInOut {
+          0%, 100% { opacity: 0; transform: translateX(100%); }
+          15%, 85% { opacity: 1; transform: translateX(0); }
+        }
+      </style>
+    `;
+    
+    document.body.appendChild(message);
+    
+    setTimeout(() => {
+      if (message.parentElement) {
+        message.remove();
+      }
+    }, 3000);
   }
   
   startTracking() {

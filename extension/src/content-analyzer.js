@@ -402,6 +402,8 @@ class UniversalContentAnalyzer {
       return this.analyzeRedditContent(url, title, content);
     } else if (domain.includes('twitter.com') || domain.includes('x.com')) {
       return this.analyzeTwitterContent(url, title, content);
+    } else if (domain.includes('linkedin.com')) {
+      return this.analyzeLinkedInContent(url, title, content);
     }
     
     return { platformScore: 50 };
@@ -459,6 +461,49 @@ class UniversalContentAnalyzer {
       hasLinks,
       isShortTweet,
       platformScore: hasThread ? 70 : (hasLinks ? 50 : 20)
+    };
+  }
+  
+  analyzeLinkedInContent(url, title, content) {
+    const isArticle = url.includes('/pulse/');
+    const isPost = url.includes('/posts/') || url.includes('/feed/') || url.includes('activity-');
+    
+    // Check for professional/business content indicators
+    const professionalIndicators = /\b(insights|experience|lessons learned|industry|professional|career|business|strategy|leadership|management|innovation|technology|productivity|networking|collaboration)\b/gi;
+    const professionalMatches = content.match(professionalIndicators) || [];
+    
+    // Check for thought leadership indicators
+    const thoughtLeadershipIndicators = /\b(opinion|perspective|thoughts on|analysis|forecast|prediction|trend|future|recommendation|best practices|framework|methodology)\b/gi;
+    const thoughtLeadershipMatches = content.match(thoughtLeadershipIndicators) || [];
+    
+    // Check for engagement quality
+    const hasHashtags = /#[\w]+/g.test(content);
+    const hasMentions = /@[\w]+/g.test(content);
+    const hasQualityLength = content.length > 200;
+    const hasStructure = /\n\n|\d+\.|•|\-\s/g.test(content);
+    
+    // LinkedIn articles are generally higher quality
+    const baseScore = isArticle ? 80 : 60;
+    
+    // Boost for professional content
+    const professionalBoost = Math.min(professionalMatches.length * 5, 20);
+    const thoughtLeadershipBoost = Math.min(thoughtLeadershipMatches.length * 3, 15);
+    
+    // Quality indicators
+    const qualityBonus = (hasQualityLength ? 10 : 0) + (hasStructure ? 10 : 0);
+    
+    const platformScore = Math.min(baseScore + professionalBoost + thoughtLeadershipBoost + qualityBonus, 100);
+    
+    return {
+      isArticle,
+      isPost,
+      professionalIndicators: professionalMatches.length,
+      thoughtLeadershipIndicators: thoughtLeadershipMatches.length,
+      hasHashtags,
+      hasMentions,
+      hasQualityLength,
+      hasStructure,
+      platformScore
     };
   }
   
