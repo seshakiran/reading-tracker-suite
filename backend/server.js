@@ -251,9 +251,14 @@ app.post('/api/newsletter/generate', async (req, res) => {
       params.push(minScore);
     }
     
-    // Add LinkedIn exclusion filter
+    // Exclude LinkedIn posts by default (unless specifically requested)
+    if (!includeCategories.includes('linkedin') && !includeCategories.includes('linkedin_newsletter')) {
+      sql += ` AND rs.category NOT IN ('linkedin', 'linkedin_newsletter')`;
+    }
+    
+    // Add LinkedIn exclusion filter (legacy support)
     if (excludeLinkedIn && includeCategories.includes('all')) {
-      sql += ` AND rs.category != 'linkedin'`;
+      sql += ` AND rs.category NOT IN ('linkedin', 'linkedin_newsletter')`;
     }
     
     sql += ` GROUP BY rs.id ORDER BY rs.learning_score DESC, rs.created_at DESC`;
@@ -333,6 +338,7 @@ function generateNewsletterContent(sessions, categorizedSessions, dateRange) {
   
   // Create sections by category
   const categoryTitles = {
+    curated: '⭐ Curated Articles',
     technology: '🔧 Technology & Development',
     science: '🔬 Science & Research', 
     business: '💼 Business & Strategy',
@@ -398,6 +404,338 @@ function generateFooter(sessions) {
     generatedAt: new Date().toISOString(),
     message: "This digest was automatically generated from my reading tracker. Each article was intelligently filtered and scored for learning value."
   };
+}
+
+// Newsletter queue management endpoints
+
+// Get newsletter queue items
+app.get('/api/newsletter/queue', (req, res) => {
+  const sql = `
+    SELECT 
+      rs.*,
+      GROUP_CONCAT(t.name) as tags,
+      GROUP_CONCAT(t.color) as tag_colors
+    FROM reading_sessions rs
+    LEFT JOIN session_tags st ON rs.id = st.session_id
+    LEFT JOIN tags t ON st.tag_id = t.id
+    WHERE rs.category = 'newsletter_queue'
+    GROUP BY rs.id
+    ORDER BY rs.created_at DESC
+  `;
+  
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error('Error fetching newsletter queue:', err.message);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    // Format the response
+    const items = rows.map(row => ({
+      ...row,
+      tags: row.tags ? row.tags.split(',') : [],
+      tag_colors: row.tag_colors ? row.tag_colors.split(',') : []
+    }));
+    
+    res.json(items);
+  });
+});
+
+// Add article to newsletter queue
+app.post('/api/newsletter/queue', (req, res) => {
+  const { title, url, content_type, reading_time, word_count, excerpt, notes, learning_score } = req.body;
+  
+  if (!title || !url) {
+    return res.status(400).json({ error: 'Title and URL are required' });
+  }
+  
+  const sql = `
+    INSERT INTO reading_sessions (title, url, content_type, reading_time, word_count, excerpt, notes, learning_score, category)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'newsletter_queue')
+  `;
+  
+  db.run(sql, [title, url, content_type || 'web', reading_time || 0, word_count || 0, excerpt, notes, learning_score || 75], async function(err) {
+    if (err) {
+      console.error('Error adding to newsletter queue:', err.message);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    const sessionId = this.lastID;
+    
+    try {
+      // Auto-generate newsletter with updated queue
+      const newsletterData = await generateNewsletterFromQueue();
+      
+      res.json({ 
+        success: true, 
+        id: sessionId, 
+        message: 'Article added to newsletter queue',
+        newsletter: newsletterData.newsletter,
+        stats: newsletterData.stats,
+        formats: {
+          html: generateNewsletterHTML(newsletterData.newsletter),
+          markdown: generateNewsletterMarkdown(newsletterData.newsletter)
+        }
+      });
+    } catch (error) {
+      console.error('Error auto-generating newsletter:', error);
+      // Still return success for adding to queue, even if newsletter generation fails
+      res.json({ 
+        success: true, 
+        id: sessionId, 
+        message: 'Article added to newsletter queue (newsletter generation failed)',
+        error: 'Newsletter auto-generation failed'
+      });
+    }
+  });
+});
+
+// Remove article from newsletter queue
+app.delete('/api/newsletter/queue/:id', (req, res) => {
+  const { id } = req.params;
+  
+  const sql = `DELETE FROM reading_sessions WHERE id = ? AND category = 'newsletter_queue'`;
+  
+  db.run(sql, [id], function(err) {
+    if (err) {
+      console.error('Error removing from newsletter queue:', err.message);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'Article not found in newsletter queue' });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'Article removed from newsletter queue' 
+    });
+  });
+});
+
+// Move queue items to newsletter (include newsletter_queue in newsletter generation)
+app.post('/api/newsletter/generate-from-queue', async (req, res) => {
+  try {
+    const { includeTracked = false, dateRange = 7, minScore = 50 } = req.body;
+    
+    let sql = `
+      SELECT 
+        rs.*,
+        GROUP_CONCAT(t.name) as tags,
+        GROUP_CONCAT(t.color) as tag_colors
+      FROM reading_sessions rs
+      LEFT JOIN session_tags st ON rs.id = st.session_id
+      LEFT JOIN tags t ON st.tag_id = t.id
+      WHERE rs.category = 'newsletter_queue'
+    `;
+    
+    const params = [];
+    
+    // Optionally include tracked articles from recent days
+    if (includeTracked) {
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - dateRange);
+      
+      const dateFrom = startDate.toISOString().split('T')[0] + ' 00:00:00';
+      const dateTo = endDate.toISOString().split('T')[0] + ' 23:59:59';
+      
+      sql = `
+        SELECT 
+          rs.*,
+          GROUP_CONCAT(t.name) as tags,
+          GROUP_CONCAT(t.color) as tag_colors
+        FROM reading_sessions rs
+        LEFT JOIN session_tags st ON rs.id = st.session_id
+        LEFT JOIN tags t ON st.tag_id = t.id
+        WHERE (rs.category = 'newsletter_queue' 
+               OR (rs.category NOT IN ('linkedin', 'linkedin_newsletter') 
+                   AND rs.created_at >= ? AND rs.created_at <= ? 
+                   AND rs.learning_score >= ?))
+      `;
+      params.push(dateFrom, dateTo, minScore);
+    }
+    
+    sql += ` GROUP BY rs.id ORDER BY rs.category = 'newsletter_queue' DESC, rs.learning_score DESC, rs.created_at DESC`;
+    
+    db.all(sql, params, (err, sessions) => {
+      if (err) {
+        console.error('Error fetching sessions for newsletter:', err.message);
+        return res.status(500).json({ error: 'Failed to fetch sessions' });
+      }
+      
+      // Process sessions for newsletter
+      const processedSessions = sessions.map(session => ({
+        ...session,
+        tags: session.tags ? session.tags.split(',') : [],
+        tag_colors: session.tag_colors ? session.tag_colors.split(',') : [],
+        reading_time_formatted: `${session.reading_time} min`,
+        created_at_formatted: new Date(session.created_at).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        })
+      }));
+      
+      // Group by category, with newsletter_queue items marked as "curated"
+      const categorizedSessions = processedSessions.reduce((acc, session) => {
+        const category = session.category === 'newsletter_queue' ? 'curated' : session.category;
+        if (!acc[category]) {
+          acc[category] = [];
+        }
+        acc[category].push(session);
+        return acc;
+      }, {});
+      
+      // Generate newsletter content
+      const newsletter = generateNewsletterContent(processedSessions, categorizedSessions, dateRange);
+      
+      res.json({
+        success: true,
+        newsletter,
+        stats: {
+          totalSessions: processedSessions.length,
+          queueItems: processedSessions.filter(s => s.category === 'newsletter_queue').length,
+          dateRange,
+          categories: Object.keys(categorizedSessions),
+          avgLearningScore: processedSessions.length > 0 
+            ? Math.round(processedSessions.reduce((sum, s) => sum + s.learning_score, 0) / processedSessions.length)
+            : 0
+        },
+        timestamp: new Date().toISOString()
+      });
+    });
+    
+  } catch (error) {
+    console.error('Newsletter generation error:', error);
+    res.status(500).json({ error: 'Failed to generate newsletter' });
+  }
+});
+
+// Helper function to generate newsletter from queue
+async function generateNewsletterFromQueue() {
+  return new Promise((resolve, reject) => {
+    const sql = `
+      SELECT 
+        rs.*,
+        GROUP_CONCAT(t.name) as tags,
+        GROUP_CONCAT(t.color) as tag_colors
+      FROM reading_sessions rs
+      LEFT JOIN session_tags st ON rs.id = st.session_id
+      LEFT JOIN tags t ON st.tag_id = t.id
+      WHERE rs.category = 'newsletter_queue'
+      GROUP BY rs.id
+      ORDER BY rs.created_at DESC
+    `;
+    
+    db.all(sql, [], (err, sessions) => {
+      if (err) {
+        return reject(err);
+      }
+      
+      // Process sessions for newsletter
+      const processedSessions = sessions.map(session => ({
+        ...session,
+        tags: session.tags ? session.tags.split(',') : [],
+        tag_colors: session.tag_colors ? session.tag_colors.split(',') : [],
+        reading_time_formatted: `${session.reading_time} min`,
+        created_at_formatted: new Date(session.created_at).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        })
+      }));
+      
+      // Group by category, with newsletter_queue items marked as "curated"
+      const categorizedSessions = processedSessions.reduce((acc, session) => {
+        const category = 'curated'; // All queue items are curated
+        if (!acc[category]) {
+          acc[category] = [];
+        }
+        acc[category].push(session);
+        return acc;
+      }, {});
+      
+      // Generate newsletter content
+      const newsletter = generateNewsletterContent(processedSessions, categorizedSessions, 0);
+      
+      resolve({
+        newsletter,
+        stats: {
+          totalSessions: processedSessions.length,
+          queueItems: processedSessions.length,
+          dateRange: 0,
+          categories: Object.keys(categorizedSessions),
+          avgLearningScore: processedSessions.length > 0 
+            ? Math.round(processedSessions.reduce((sum, s) => sum + s.learning_score, 0) / processedSessions.length)
+            : 0
+        }
+      });
+    });
+  });
+}
+
+// Generate HTML format for Substack
+function generateNewsletterHTML(newsletter) {
+  let html = `<h1>${newsletter.title}</h1>\n\n`;
+  html += `<p><em>${newsletter.subtitle}</em></p>\n\n`;
+  html += `<p>${newsletter.intro}</p>\n\n`;
+  
+  newsletter.sections.forEach(section => {
+    html += `<h2>${section.title}</h2>\n\n`;
+    section.items.forEach(item => {
+      // Simple, clean format that Substack recognizes
+      html += `<h3><a href="${item.url}">${item.title}</a></h3>\n\n`;
+      html += `<p>${item.excerpt}</p>\n\n`;
+      
+      if (item.tags.length > 0) {
+        html += `<p><em>Tags: ${item.tags.join(', ')}</em></p>\n\n`;
+      }
+      
+      html += `<p><small>${item.date} • Learning Score: ${item.learningScore}/100</small></p>\n\n`;
+      html += `<hr>\n\n`;
+    });
+  });
+  
+  html += `<h3>About This Digest</h3>\n\n`;
+  html += `<p>${newsletter.footer.message}</p>\n\n`;
+  html += `<p><strong>Stats:</strong></p>\n`;
+  html += `<ul>\n`;
+  html += `  <li>Total articles: ${newsletter.footer.totalArticles}</li>\n`;
+  html += `  <li>Categories: ${newsletter.footer.categories.join(', ')}</li>\n`;
+  html += `  <li>Generated: ${new Date(newsletter.footer.generatedAt).toLocaleString()}</li>\n`;
+  html += `</ul>\n`;
+  
+  return html;
+}
+
+// Generate Markdown format
+function generateNewsletterMarkdown(newsletter) {
+  let markdown = `# ${newsletter.title}\n\n`;
+  markdown += `*${newsletter.subtitle}*\n\n`;
+  markdown += `${newsletter.intro}\n\n`;
+  
+  newsletter.sections.forEach(section => {
+    markdown += `## ${section.title}\n\n`;
+    section.items.forEach(item => {
+      markdown += `### [${item.title}](${item.url})\n\n`;
+      markdown += `${item.excerpt}\n\n`;
+      
+      if (item.tags.length > 0) {
+        markdown += `**Tags:** ${item.tags.join(', ')}\n\n`;
+      }
+      
+      markdown += `*${item.date} • Score: ${item.learningScore}/100*\n\n`;
+      markdown += `---\n\n`;
+    });
+  });
+  
+  markdown += `## About This Digest\n\n`;
+  markdown += `${newsletter.footer.message}\n\n`;
+  markdown += `- **Total articles:** ${newsletter.footer.totalArticles}\n`;
+  markdown += `- **Categories:** ${newsletter.footer.categories.join(', ')}\n`;
+  markdown += `- **Generated:** ${new Date(newsletter.footer.generatedAt).toLocaleString()}\n`;
+  
+  return markdown;
 }
 
 // Error handling middleware

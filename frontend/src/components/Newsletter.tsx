@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Mail, Download, Settings, Calendar, Target, Filter, Copy, Trash2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Mail, Download, Settings, Calendar, Target, Filter, Copy, Trash2, List, RefreshCw, FileText, Code } from 'lucide-react';
 
 interface NewsletterItem {
   title: string;
@@ -45,12 +45,115 @@ const Newsletter: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  // Newsletter queue state
+  const [queueItems, setQueueItems] = useState<NewsletterItem[]>([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'generator' | 'queue'>('generator');
+  
+  // Newsletter formats state
+  const [newsletterFormats, setNewsletterFormats] = useState<{html: string, markdown: string} | null>(null);
+  
   // Configuration state
   const [dateRange, setDateRange] = useState(7);
   const [includeCategories, setIncludeCategories] = useState(['all']);
   const [excludeLowScore, setExcludeLowScore] = useState(false);
   const [minScore, setMinScore] = useState(30);
   const [excludeLinkedIn, setExcludeLinkedIn] = useState(true); // Default to excluding LinkedIn
+
+  // Load newsletter queue on component mount
+  useEffect(() => {
+    loadNewsletterQueue();
+  }, []);
+
+  const loadNewsletterQueue = async () => {
+    setQueueLoading(true);
+    try {
+      const response = await fetch('http://localhost:3001/api/newsletter/queue');
+      if (response.ok) {
+        const items = await response.json();
+        setQueueItems(items.map((item: any) => ({
+          title: item.title,
+          url: item.url,
+          excerpt: item.excerpt,
+          readingTime: item.reading_time,
+          learningScore: item.learning_score,
+          tags: item.tags || [],
+          date: new Date(item.created_at).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+          }),
+          category: item.category,
+          id: item.id.toString()
+        })));
+        
+        // Auto-generate newsletter if queue has items
+        if (items.length > 0) {
+          const newsletterData = await generateFromQueue();
+          if (newsletterData && newsletterData.formats) {
+            setNewsletterFormats(newsletterData.formats);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading newsletter queue:', error);
+      setError('Failed to load newsletter queue');
+    } finally {
+      setQueueLoading(false);
+    }
+  };
+
+  const removeFromQueue = async (id: string) => {
+    try {
+      const response = await fetch(`http://localhost:3001/api/newsletter/queue/${id}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        setQueueItems(prev => prev.filter(item => item.id !== id));
+      } else {
+        throw new Error('Failed to remove item from queue');
+      }
+    } catch (error) {
+      console.error('Error removing from queue:', error);
+      setError('Failed to remove item from queue');
+    }
+  };
+
+  const generateFromQueue = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const response = await fetch('http://localhost:3001/api/newsletter/generate-from-queue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          includeTracked: includeCategories.includes('all'),
+          dateRange,
+          minScore: excludeLowScore ? minScore : 0
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to generate newsletter from queue');
+      }
+      
+      const data = await response.json();
+      setNewsletter(data.newsletter);
+      setStats(data.stats);
+      
+      // Return the data so it can be used by caller
+      return data;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate newsletter from queue');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const generateNewsletter = async () => {
     setLoading(true);
@@ -125,6 +228,44 @@ const Newsletter: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to copy: ', err);
+    }
+  };
+
+  const copyHTMLToClipboard = async () => {
+    if (!newsletterFormats?.html) return;
+    
+    try {
+      await navigator.clipboard.writeText(newsletterFormats.html);
+      // Show success message
+      const button = document.querySelector('#copy-html-button');
+      if (button) {
+        const originalText = button.textContent;
+        button.textContent = 'Copied!';
+        setTimeout(() => {
+          button.textContent = originalText;
+        }, 2000);
+      }
+    } catch (err) {
+      console.error('Failed to copy HTML: ', err);
+    }
+  };
+
+  const copyMarkdownToClipboard = async () => {
+    if (!newsletterFormats?.markdown) return;
+    
+    try {
+      await navigator.clipboard.writeText(newsletterFormats.markdown);
+      // Show success message
+      const button = document.querySelector('#copy-markdown-button');
+      if (button) {
+        const originalText = button.textContent;
+        button.textContent = 'Copied!';
+        setTimeout(() => {
+          button.textContent = originalText;
+        }, 2000);
+      }
+    } catch (err) {
+      console.error('Failed to copy Markdown: ', err);
     }
   };
 
@@ -203,23 +344,62 @@ const Newsletter: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Newsletter Generator</h1>
           <p className="text-gray-600 mt-1">
-            Create beautiful newsletters from your reading sessions
+            Create beautiful newsletters from your reading sessions and curated articles
           </p>
         </div>
         <div className="flex items-center space-x-2">
           <button
-            onClick={generateNewsletter}
+            onClick={loadNewsletterQueue}
+            disabled={queueLoading}
+            className="btn-secondary flex items-center space-x-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${queueLoading ? 'animate-spin' : ''}`} />
+            <span>Refresh Queue</span>
+          </button>
+          <button
+            onClick={activeTab === 'generator' ? generateNewsletter : generateFromQueue}
             disabled={loading}
             className="btn-primary flex items-center space-x-2"
           >
             <Mail className="h-4 w-4" />
-            <span>{loading ? 'Generating...' : 'Generate Newsletter'}</span>
+            <span>{loading ? 'Generating...' : activeTab === 'generator' ? 'Generate Newsletter' : 'Generate from Queue'}</span>
           </button>
         </div>
       </div>
 
-      {/* Configuration Panel */}
-      <div className="card">
+      {/* Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('generator')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'generator'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <Mail className="h-4 w-4 inline mr-2" />
+            Newsletter Generator
+          </button>
+          <button
+            onClick={() => setActiveTab('queue')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'queue'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <List className="h-4 w-4 inline mr-2" />
+            Newsletter Queue ({queueItems.length})
+          </button>
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'generator' ? (
+        <>
+          {/* Configuration Panel */}
+          <div className="card">
         <div className="flex items-center space-x-2 mb-4">
           <Settings className="h-5 w-5 text-gray-500" />
           <h3 className="text-lg font-semibold">Configuration</h3>
@@ -363,17 +543,37 @@ const Newsletter: React.FC = () => {
                 <button
                   id="copy-button"
                   onClick={copyToClipboard}
-                  className="btn-primary flex items-center space-x-2"
+                  className="btn-secondary flex items-center space-x-2"
                 >
                   <Copy className="h-4 w-4" />
-                  <span>Copy for Substack</span>
+                  <span>Copy Text</span>
                 </button>
+                {newsletterFormats?.html && (
+                  <button
+                    id="copy-html-button"
+                    onClick={copyHTMLToClipboard}
+                    className="btn-primary flex items-center space-x-2"
+                  >
+                    <Code className="h-4 w-4" />
+                    <span>Copy HTML</span>
+                  </button>
+                )}
+                {newsletterFormats?.markdown && (
+                  <button
+                    id="copy-markdown-button"
+                    onClick={copyMarkdownToClipboard}
+                    className="btn-secondary flex items-center space-x-2"
+                  >
+                    <FileText className="h-4 w-4" />
+                    <span>Copy Markdown</span>
+                  </button>
+                )}
                 <button
                   onClick={exportAsMarkdown}
                   className="btn-secondary flex items-center space-x-2"
                 >
                   <Download className="h-4 w-4" />
-                  <span>Download Markdown</span>
+                  <span>Download MD</span>
                 </button>
               </div>
             </div>
@@ -484,6 +684,128 @@ const Newsletter: React.FC = () => {
           >
             Generate Your First Newsletter
           </button>
+        </div>
+      )}
+      </>
+      ) : (
+        /* Newsletter Queue Tab */
+        <div className="space-y-6">
+          {/* Queue Header */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold">Newsletter Queue</h3>
+                <p className="text-sm text-gray-600">
+                  Articles you've manually added to your newsletter queue
+                </p>
+              </div>
+              <div className="text-sm text-gray-500">
+                {queueItems.length} item{queueItems.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+            
+            {queueItems.length > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Mail className="h-4 w-4 text-blue-600" />
+                  <span className="text-sm font-medium text-blue-900">Quick Actions</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={generateFromQueue}
+                    disabled={loading}
+                    className="btn-primary text-sm"
+                  >
+                    Generate Newsletter from Queue
+                  </button>
+                  <span className="text-sm text-blue-700">
+                    This will create a newsletter with your curated articles
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Queue Items */}
+          {queueLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <RefreshCw className="h-8 w-8 animate-spin text-gray-400" />
+              <span className="ml-2 text-gray-600">Loading queue...</span>
+            </div>
+          ) : queueItems.length === 0 ? (
+            <div className="text-center py-12">
+              <List className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                Your newsletter queue is empty
+              </h3>
+              <p className="text-gray-600 mb-4">
+                Visit articles and use the "Add to Newsletter" button to add them to your queue.
+              </p>
+              <div className="text-sm text-gray-500">
+                <p>💡 <strong>Tip:</strong> The floating newsletter button appears on learning-focused content</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {queueItems.map((item, index) => (
+                <div
+                  key={item.id || index}
+                  className="card hover:bg-gray-50 transition-colors"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-gray-900 mb-2">
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:text-blue-600 transition-colors"
+                        >
+                          {item.title}
+                        </a>
+                      </h3>
+                      
+                      {item.excerpt && (
+                        <p className="text-gray-600 mb-3 text-sm leading-relaxed">
+                          {item.excerpt}
+                        </p>
+                      )}
+                      
+                      <div className="flex items-center space-x-4 text-xs text-gray-500">
+                        <span>{item.date}</span>
+                        <span>Score: {item.learningScore}/100</span>
+                        {item.readingTime && (
+                          <span>{item.readingTime} min read</span>
+                        )}
+                        {item.tags && item.tags.length > 0 && (
+                          <div className="flex items-center space-x-1">
+                            {item.tags.slice(0, 2).map((tag, tagIndex) => (
+                              <span
+                                key={tagIndex}
+                                className="px-2 py-1 bg-gray-200 rounded-full text-xs"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="ml-4">
+                      <button
+                        onClick={() => removeFromQueue(item.id!)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Remove from queue"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

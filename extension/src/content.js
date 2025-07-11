@@ -37,6 +37,9 @@ class ReadingTracker {
       });
       this.setupEventListeners();
       this.startTracking();
+      
+      // Show floating "Add to Newsletter" button for learning content
+      this.showNewsletterButton();
     } else {
       console.log('Reading Tracker: Content not suitable for tracking', {
         learningScore: this.analysisResult.learningScore,
@@ -1474,6 +1477,267 @@ class ReadingTracker {
         }
       }, 300);
     }, 3000);
+  }
+  
+  // Universal "Add to Newsletter" floating button for learning content
+  showNewsletterButton() {
+    // Skip if button already exists
+    if (document.getElementById('rt-newsletter-float')) {
+      return;
+    }
+    
+    console.log('Reading Tracker: Showing newsletter button for learning content');
+    
+    // Create floating button container
+    const floatingButton = document.createElement('div');
+    floatingButton.id = 'rt-newsletter-float';
+    floatingButton.innerHTML = `
+      <div class="rt-newsletter-float-container">
+        <div class="rt-newsletter-float-button" id="rt-newsletter-btn">
+          <div class="rt-newsletter-icon">📰</div>
+          <div class="rt-newsletter-text">Add to Newsletter</div>
+        </div>
+      </div>
+    `;
+    
+    // Add styles
+    const style = document.createElement('style');
+    style.id = 'rt-newsletter-styles';
+    style.textContent = `
+      #rt-newsletter-float {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 999999;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        pointer-events: none;
+      }
+      
+      .rt-newsletter-float-container {
+        pointer-events: auto;
+      }
+      
+      .rt-newsletter-float-button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        background: #2563eb;
+        color: white;
+        border-radius: 25px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        border: none;
+        font-size: 14px;
+        font-weight: 500;
+        user-select: none;
+        animation: rtSlideIn 0.3s ease-out;
+        min-width: 160px;
+        justify-content: center;
+      }
+      
+      .rt-newsletter-float-button:hover {
+        background: #1d4ed8;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 16px rgba(37, 99, 235, 0.4);
+      }
+      
+      .rt-newsletter-float-button.rt-processing {
+        background: #f59e0b;
+        cursor: not-allowed;
+        transform: none;
+      }
+      
+      .rt-newsletter-float-button.rt-success {
+        background: #10b981;
+        cursor: default;
+        transform: none;
+      }
+      
+      .rt-newsletter-icon {
+        font-size: 16px;
+        line-height: 1;
+      }
+      
+      .rt-newsletter-text {
+        font-size: 14px;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      
+      
+      @keyframes rtSlideIn {
+        from {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+      
+      @keyframes rtSlideOut {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+      }
+    `;
+    
+    // Add to page
+    document.head.appendChild(style);
+    document.body.appendChild(floatingButton);
+    
+    // Add event listeners
+    const btn = document.getElementById('rt-newsletter-btn');
+    
+    btn.addEventListener('click', () => {
+      console.log('Reading Tracker: Newsletter button clicked - adding directly to newsletter');
+      this.addToNewsletter();
+    });
+    
+    // Auto-hide after 30 seconds if no interaction
+    setTimeout(() => {
+      if (document.getElementById('rt-newsletter-float')) {
+        this.hideNewsletterButton();
+      }
+    }, 30000);
+  }
+  
+  hideNewsletterButton() {
+    const button = document.getElementById('rt-newsletter-float');
+    const styles = document.getElementById('rt-newsletter-styles');
+    
+    if (button) {
+      button.style.animation = 'rtSlideOut 0.3s ease-in';
+      setTimeout(() => {
+        if (button.parentElement) {
+          button.remove();
+        }
+      }, 300);
+    }
+    
+    if (styles) {
+      styles.remove();
+    }
+  }
+  
+  async addToNewsletter() {
+    console.log('Reading Tracker: Adding article to newsletter queue');
+    
+    const btn = document.getElementById('rt-newsletter-btn');
+    
+    // Show processing state
+    btn.classList.add('rt-processing');
+    btn.innerHTML = `
+      <div class="rt-newsletter-icon">⏳</div>
+      <div class="rt-newsletter-text">Adding...</div>
+    `;
+    
+    try {
+      // Extract article content
+      const articleContent = this.extractArticleContent();
+      
+      // Add to newsletter queue
+      const response = await fetch('http://localhost:3001/api/newsletter/queue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: articleContent.title,
+          url: articleContent.url,
+          content_type: 'web',
+          reading_time: Math.max(1, Math.round(articleContent.wordCount / 200)), // Estimate reading time
+          word_count: articleContent.wordCount,
+          excerpt: articleContent.excerpt,
+          learning_score: this.analysisResult.learningScore,
+          notes: `Added via newsletter button - ${this.analysisResult.category} content`
+        }),
+      });
+      
+      if (response.ok) {
+        // Show success state
+        btn.classList.remove('rt-processing');
+        btn.classList.add('rt-success');
+        btn.innerHTML = `
+          <div class="rt-newsletter-icon">✅</div>
+          <div class="rt-newsletter-text">Added!</div>
+        `;
+        
+        // Hide after 3 seconds
+        setTimeout(() => {
+          this.hideNewsletterButton();
+        }, 3000);
+        
+        console.log('Reading Tracker: Article successfully added to newsletter queue');
+      } else {
+        throw new Error('Failed to add to newsletter queue');
+      }
+    } catch (error) {
+      console.error('Reading Tracker: Error adding to newsletter:', error);
+      
+      // Show error state
+      btn.classList.remove('rt-processing');
+      btn.innerHTML = `
+        <div class="rt-newsletter-icon">❌</div>
+        <div class="rt-newsletter-text">Error</div>
+      `;
+      
+      // Hide after 3 seconds
+      setTimeout(() => {
+        this.hideNewsletterButton();
+      }, 3000);
+    }
+  }
+  
+  extractArticleContent() {
+    // Extract clean article content for newsletter
+    const title = document.title || 'Untitled Article';
+    const url = window.location.href;
+    
+    // Try to extract a good excerpt
+    let excerpt = '';
+    
+    // Try meta description first
+    const metaDescription = document.querySelector('meta[name="description"]');
+    if (metaDescription && metaDescription.content.trim()) {
+      excerpt = metaDescription.content.trim();
+    }
+    
+    // Fallback to first paragraph
+    if (!excerpt) {
+      const firstParagraph = document.querySelector('article p, .article-content p, .post-content p, .content p, main p, p');
+      if (firstParagraph && firstParagraph.textContent.trim().length > 50) {
+        excerpt = firstParagraph.textContent.trim();
+      }
+    }
+    
+    // Fallback to beginning of main content
+    if (!excerpt && this.mainContent) {
+      const text = this.mainContent.textContent || this.mainContent.innerText || '';
+      if (text.length > 100) {
+        excerpt = text.substring(0, 200).trim() + '...';
+      }
+    }
+    
+    // Clean up excerpt
+    if (excerpt && excerpt.length > 300) {
+      excerpt = excerpt.substring(0, 300).trim() + '...';
+    }
+    
+    return {
+      title,
+      url,
+      excerpt: excerpt || `Learning content from ${window.location.hostname}`,
+      wordCount: this.wordCount || 0
+    };
   }
 }
 
