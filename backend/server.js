@@ -254,11 +254,13 @@ app.post('/api/newsletter/generate', async (req, res) => {
     // Exclude LinkedIn posts by default (unless specifically requested)
     if (!includeCategories.includes('linkedin') && !includeCategories.includes('linkedin_newsletter')) {
       sql += ` AND rs.category NOT IN ('linkedin', 'linkedin_newsletter')`;
+      sql += ` AND rs.url NOT LIKE '%linkedin.com%'`;
     }
     
     // Add LinkedIn exclusion filter (legacy support)
     if (excludeLinkedIn && includeCategories.includes('all')) {
       sql += ` AND rs.category NOT IN ('linkedin', 'linkedin_newsletter')`;
+      sql += ` AND rs.url NOT LIKE '%linkedin.com%'`;
     }
     
     sql += ` GROUP BY rs.id ORDER BY rs.learning_score DESC, rs.created_at DESC`;
@@ -565,6 +567,7 @@ app.post('/api/newsletter/generate-from-queue', async (req, res) => {
         LEFT JOIN tags t ON st.tag_id = t.id
         WHERE (rs.category = 'newsletter_queue' 
                OR (rs.category NOT IN ('linkedin', 'linkedin_newsletter') 
+                   AND rs.url NOT LIKE '%linkedin.com%'
                    AND rs.created_at >= ? AND rs.created_at <= ? 
                    AND rs.learning_score >= ?))
       `;
