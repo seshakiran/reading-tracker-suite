@@ -554,8 +554,8 @@ const Newsletter: React.FC = () => {
                     onClick={copyHTMLToClipboard}
                     className="btn-primary flex items-center space-x-2"
                   >
-                    <Code className="h-4 w-4" />
-                    <span>Copy HTML</span>
+                    <Copy className="h-4 w-4" />
+                    <span>Copy for Substack</span>
                   </button>
                 )}
                 {newsletterFormats?.markdown && (

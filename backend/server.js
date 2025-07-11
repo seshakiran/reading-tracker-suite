@@ -269,8 +269,24 @@ app.post('/api/newsletter/generate', async (req, res) => {
         return res.status(500).json({ error: 'Failed to fetch sessions' });
       }
       
+      // Remove duplicates based on URL and title
+      const uniqueSessions = [];
+      const seenUrls = new Set();
+      const seenTitles = new Set();
+      
+      sessions.forEach(session => {
+        const normalizedUrl = session.url?.toLowerCase().split('?')[0]; // Remove query params for comparison
+        const normalizedTitle = session.title?.toLowerCase().trim();
+        
+        if (!seenUrls.has(normalizedUrl) && !seenTitles.has(normalizedTitle)) {
+          seenUrls.add(normalizedUrl);
+          seenTitles.add(normalizedTitle);
+          uniqueSessions.push(session);
+        }
+      });
+      
       // Process sessions for newsletter
-      const processedSessions = sessions.map(session => ({
+      const processedSessions = uniqueSessions.map(session => ({
         ...session,
         tags: session.tags ? session.tags.split(',') : [],
         tag_colors: session.tag_colors ? session.tag_colors.split(',') : [],
@@ -563,8 +579,24 @@ app.post('/api/newsletter/generate-from-queue', async (req, res) => {
         return res.status(500).json({ error: 'Failed to fetch sessions' });
       }
       
+      // Remove duplicates based on URL and title
+      const uniqueSessions = [];
+      const seenUrls = new Set();
+      const seenTitles = new Set();
+      
+      sessions.forEach(session => {
+        const normalizedUrl = session.url?.toLowerCase().split('?')[0]; // Remove query params for comparison
+        const normalizedTitle = session.title?.toLowerCase().trim();
+        
+        if (!seenUrls.has(normalizedUrl) && !seenTitles.has(normalizedTitle)) {
+          seenUrls.add(normalizedUrl);
+          seenTitles.add(normalizedTitle);
+          uniqueSessions.push(session);
+        }
+      });
+      
       // Process sessions for newsletter
-      const processedSessions = sessions.map(session => ({
+      const processedSessions = uniqueSessions.map(session => ({
         ...session,
         tags: session.tags ? session.tags.split(',') : [],
         tag_colors: session.tag_colors ? session.tag_colors.split(',') : [],
@@ -601,6 +633,10 @@ app.post('/api/newsletter/generate-from-queue', async (req, res) => {
             ? Math.round(processedSessions.reduce((sum, s) => sum + s.learning_score, 0) / processedSessions.length)
             : 0
         },
+        formats: {
+          html: generateNewsletterHTML(newsletter),
+          markdown: generateNewsletterMarkdown(newsletter)
+        },
         timestamp: new Date().toISOString()
       });
     });
@@ -623,6 +659,9 @@ async function generateNewsletterFromQueue() {
       LEFT JOIN session_tags st ON rs.id = st.session_id
       LEFT JOIN tags t ON st.tag_id = t.id
       WHERE rs.category = 'newsletter_queue'
+        AND rs.url NOT LIKE '%linkedin.com%'
+        AND rs.url NOT LIKE '%linkedin.com/feed%'
+        AND rs.url NOT LIKE '%linkedin.com/posts%'
       GROUP BY rs.id
       ORDER BY rs.created_at DESC
     `;
@@ -632,8 +671,24 @@ async function generateNewsletterFromQueue() {
         return reject(err);
       }
       
+      // Remove duplicates based on URL and title
+      const uniqueSessions = [];
+      const seenUrls = new Set();
+      const seenTitles = new Set();
+      
+      sessions.forEach(session => {
+        const normalizedUrl = session.url?.toLowerCase().split('?')[0]; // Remove query params for comparison
+        const normalizedTitle = session.title?.toLowerCase().trim();
+        
+        if (!seenUrls.has(normalizedUrl) && !seenTitles.has(normalizedTitle)) {
+          seenUrls.add(normalizedUrl);
+          seenTitles.add(normalizedTitle);
+          uniqueSessions.push(session);
+        }
+      });
+      
       // Process sessions for newsletter
-      const processedSessions = sessions.map(session => ({
+      const processedSessions = uniqueSessions.map(session => ({
         ...session,
         tags: session.tags ? session.tags.split(',') : [],
         tag_colors: session.tag_colors ? session.tag_colors.split(',') : [],
@@ -668,6 +723,10 @@ async function generateNewsletterFromQueue() {
           avgLearningScore: processedSessions.length > 0 
             ? Math.round(processedSessions.reduce((sum, s) => sum + s.learning_score, 0) / processedSessions.length)
             : 0
+        },
+        formats: {
+          html: generateNewsletterHTML(newsletter),
+          markdown: generateNewsletterMarkdown(newsletter)
         }
       });
     });
@@ -676,6 +735,40 @@ async function generateNewsletterFromQueue() {
 
 // Generate HTML format for Substack
 function generateNewsletterHTML(newsletter) {
+  // Generate rich text format that works better with Substack's editor
+  let content = `${newsletter.title}\n\n`;
+  content += `${newsletter.subtitle}\n\n`;
+  content += `${newsletter.intro}\n\n`;
+  
+  newsletter.sections.forEach(section => {
+    content += `${section.title}\n\n`;
+    section.items.forEach(item => {
+      // Format optimized for Substack rich text editor
+      content += `${item.title}\n`;
+      content += `Link: ${item.url}\n\n`;
+      content += `${item.excerpt}\n\n`;
+      
+      if (item.tags.length > 0) {
+        content += `Tags: ${item.tags.join(', ')}\n`;
+      }
+      
+      content += `${item.date} • Score: ${item.learningScore}/100\n\n`;
+      content += `—————————————————————————————————————\n\n`;
+    });
+  });
+  
+  content += `About This Digest\n\n`;
+  content += `${newsletter.footer.message}\n\n`;
+  content += `📊 Stats:\n`;
+  content += `• Total articles: ${newsletter.footer.totalArticles}\n`;
+  content += `• Categories: ${newsletter.footer.categories.join(', ')}\n`;
+  content += `• Generated: ${new Date(newsletter.footer.generatedAt).toLocaleString()}\n`;
+  
+  return content;
+}
+
+// Generate clean HTML format for other platforms  
+function generateNewsletterHTMLFormatted(newsletter) {
   let html = `<h1>${newsletter.title}</h1>\n\n`;
   html += `<p><em>${newsletter.subtitle}</em></p>\n\n`;
   html += `<p>${newsletter.intro}</p>\n\n`;
@@ -683,7 +776,6 @@ function generateNewsletterHTML(newsletter) {
   newsletter.sections.forEach(section => {
     html += `<h2>${section.title}</h2>\n\n`;
     section.items.forEach(item => {
-      // Simple, clean format that Substack recognizes
       html += `<h3><a href="${item.url}">${item.title}</a></h3>\n\n`;
       html += `<p>${item.excerpt}</p>\n\n`;
       
