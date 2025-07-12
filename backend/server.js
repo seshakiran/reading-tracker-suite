@@ -4,10 +4,36 @@ const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fetch = require('node-fetch');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DB_PATH = process.env.DB_PATH || '/app/data/reading_tracker.db';
+
+// Basic encryption for API keys (not production-grade, but better than plain text)
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'reading-tracker-default-key-change-in-production';
+
+function encryptApiKey(text) {
+  if (!text) return null;
+  const cipher = crypto.createCipher('aes192', ENCRYPTION_KEY);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return encrypted;
+}
+
+function decryptApiKey(encrypted) {
+  if (!encrypted) return null;
+  try {
+    const decipher = crypto.createDecipher('aes192', ENCRYPTION_KEY);
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (error) {
+    console.error('Error decrypting API key:', error);
+    return null;
+  }
+}
 
 // Middleware
 app.use(helmet());
@@ -22,7 +48,251 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
     process.exit(1);
   }
   console.log('Connected to SQLite database.');
+  
+  // Update database schema for LLM features
+  initializeLLMSchema();
 });
+
+// Initialize LLM-related database schema
+function initializeLLMSchema() {
+  // Add LLM summary columns to reading_sessions table
+  db.run(`ALTER TABLE reading_sessions ADD COLUMN llm_summary TEXT DEFAULT NULL`, (err) => {
+    if (err && !err.message.includes('duplicate column')) {
+      console.error('Error adding llm_summary column:', err.message);
+    }
+  });
+  
+  db.run(`ALTER TABLE reading_sessions ADD COLUMN llm_model TEXT DEFAULT NULL`, (err) => {
+    if (err && !err.message.includes('duplicate column')) {
+      console.error('Error adding llm_model column:', err.message);
+    }
+  });
+  
+  db.run(`ALTER TABLE reading_sessions ADD COLUMN llm_generated_at TIMESTAMP DEFAULT NULL`, (err) => {
+    if (err && !err.message.includes('duplicate column')) {
+      console.error('Error adding llm_generated_at column:', err.message);
+    }
+  });
+  
+  // Create LLM configuration table
+  db.run(`CREATE TABLE IF NOT EXISTS llm_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL, -- 'ollama', 'openai', 'gemini', 'grok'
+    model_name TEXT NOT NULL,
+    api_key TEXT,
+    api_url TEXT,
+    is_active BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`, (err) => {
+    if (err) {
+      console.error('Error creating llm_config table:', err.message);
+    } else {
+      console.log('LLM configuration table ready');
+    }
+  });
+  
+  console.log('Database schema updated for LLM features');
+}
+
+// LLM Service Layer
+class LLMService {
+  static async getActiveConfig() {
+    return new Promise((resolve, reject) => {
+      db.get('SELECT * FROM llm_config WHERE is_active = 1 LIMIT 1', [], (err, row) => {
+        if (err) reject(err);
+        else {
+          if (row && row.api_key) {
+            row.api_key = decryptApiKey(row.api_key);
+          }
+          resolve(row);
+        }
+      });
+    });
+  }
+  
+  static async extractArticleContent(url) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; ReadingTracker/1.0)'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
+      const html = await response.text();
+      
+      // Simple text extraction - remove HTML tags
+      let content = html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      // Limit content length for LLM processing
+      if (content.length > 8000) {
+        content = content.substring(0, 8000) + '...';
+      }
+      
+      return content;
+    } catch (error) {
+      console.error('Error extracting article content:', error);
+      return null;
+    }
+  }
+  
+  static async generateSummary(title, url, content) {
+    try {
+      const config = await this.getActiveConfig();
+      if (!config) {
+        throw new Error('No active LLM configuration found');
+      }
+      
+      const prompt = `Please provide a concise, engaging summary of this article in 2-3 sentences. Focus on the key insights and takeaways that would be valuable for a professional newsletter.
+
+Title: ${title}
+URL: ${url}
+Content: ${content}
+
+Summary:`;
+
+      let summary;
+      
+      switch (config.provider) {
+        case 'ollama':
+          summary = await this.generateWithOllama(config, prompt);
+          break;
+        case 'openai':
+          summary = await this.generateWithOpenAI(config, prompt);
+          break;
+        case 'gemini':
+          summary = await this.generateWithGemini(config, prompt);
+          break;
+        case 'grok':
+          summary = await this.generateWithGrok(config, prompt);
+          break;
+        default:
+          throw new Error(`Unsupported LLM provider: ${config.provider}`);
+      }
+      
+      return {
+        summary,
+        model: config.model_name,
+        provider: config.provider
+      };
+    } catch (error) {
+      console.error('Error generating summary:', error);
+      return null;
+    }
+  }
+  
+  static async generateWithOllama(config, prompt) {
+    // Try multiple Ollama endpoints
+    const baseUrls = [
+      config.api_url,
+      'http://host.docker.internal:11434',
+      'http://localhost:11434',
+      'http://127.0.0.1:11434'
+    ].filter(Boolean);
+    
+    let lastError;
+    
+    for (const baseUrl of baseUrls) {
+      try {
+        const response = await fetch(`${baseUrl}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: config.model_name,
+            prompt: prompt,
+            stream: false
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Ollama API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        return data.response;
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+    }
+    
+    throw lastError || new Error('Could not connect to Ollama');
+  }
+  
+  static async generateWithOpenAI(config, prompt) {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.api_key}`
+      },
+      body: JSON.stringify({
+        model: config.model_name,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 200,
+        temperature: 0.7
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+  
+  static async generateWithGemini(config, prompt) {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${config.model_name}:generateContent?key=${config.api_key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: prompt }]
+        }]
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Gemini API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.candidates[0].content.parts[0].text;
+  }
+  
+  static async generateWithGrok(config, prompt) {
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.api_key}`
+      },
+      body: JSON.stringify({
+        model: config.model_name,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 200,
+        temperature: 0.7
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Grok API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.choices[0].message.content;
+  }
+}
 
 // Routes
 
@@ -375,12 +645,14 @@ function generateNewsletterContent(sessions, categorizedSessions, dateRange) {
       items: categorySessions.map(session => ({
         title: session.title,
         url: session.url,
-        excerpt: session.excerpt || generateExcerpt(session),
+        excerpt: session.llm_summary || session.excerpt || generateExcerpt(session),
         readingTime: session.reading_time,
         learningScore: session.learning_score,
         tags: session.tags,
         date: session.created_at_formatted,
-        category: session.category
+        category: session.category,
+        llmGenerated: !!session.llm_summary,
+        llmModel: session.llm_model
       }))
     });
   });
@@ -832,6 +1104,260 @@ function generateNewsletterMarkdown(newsletter) {
   
   return markdown;
 }
+
+// LLM Configuration endpoints
+
+// Get LLM configurations
+app.get('/api/llm/config', (req, res) => {
+  const sql = 'SELECT * FROM llm_config ORDER BY provider, model_name';
+  
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error('Error fetching LLM configs:', err.message);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    // Don't send API keys to frontend
+    const configs = rows.map(config => ({
+      ...config,
+      api_key: config.api_key ? '***' : null
+    }));
+    
+    res.json(configs);
+  });
+});
+
+// Add/Update LLM configuration
+app.post('/api/llm/config', (req, res) => {
+  const { provider, model_name, api_key, api_url, is_active } = req.body;
+  
+  if (!provider || !model_name) {
+    return res.status(400).json({ error: 'Provider and model_name are required' });
+  }
+  
+  // Encrypt API key before storing
+  const encryptedApiKey = api_key ? encryptApiKey(api_key) : null;
+  
+  const sql = `
+    INSERT OR REPLACE INTO llm_config (provider, model_name, api_key, api_url, is_active, updated_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `;
+  
+  db.run(sql, [provider, model_name, encryptedApiKey, api_url, is_active || false], function(err) {
+    if (err) {
+      console.error('Error saving LLM config:', err.message);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    res.json({ 
+      id: this.lastID, 
+      message: 'LLM configuration saved successfully' 
+    });
+  });
+});
+
+// Delete LLM configuration
+app.delete('/api/llm/config/:id', (req, res) => {
+  const { id } = req.params;
+  
+  const sql = 'DELETE FROM llm_config WHERE id = ?';
+  
+  db.run(sql, [id], function(err) {
+    if (err) {
+      console.error('Error deleting LLM config:', err.message);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    
+    if (this.changes === 0) {
+      return res.status(404).json({ error: 'LLM configuration not found' });
+    }
+    
+    res.json({ message: 'LLM configuration deleted successfully' });
+  });
+});
+
+// Check Ollama availability and get models
+app.get('/api/llm/ollama/models', async (req, res) => {
+  try {
+    // Try multiple Ollama endpoints - Docker tries host.docker.internal first
+    const ollamaUrls = [
+      'http://host.docker.internal:11434/api/tags',
+      'http://localhost:11434/api/tags',
+      'http://127.0.0.1:11434/api/tags'
+    ];
+    
+    let response;
+    let lastError;
+    
+    for (const url of ollamaUrls) {
+      try {
+        response = await fetch(url, { timeout: 2000 });
+        if (response.ok) break;
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+    }
+    
+    if (!response || !response.ok) {
+      throw lastError || new Error('Ollama not available on any endpoint');
+    }
+    
+    if (!response.ok) {
+      throw new Error('Ollama not available');
+    }
+    
+    const data = await response.json();
+    const models = data.models.map(model => ({
+      name: model.name,
+      size: model.size,
+      modified_at: model.modified_at
+    }));
+    
+    res.json({ 
+      available: true, 
+      models 
+    });
+  } catch (error) {
+    res.json({ 
+      available: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Generate LLM summary for article
+app.post('/api/llm/summarize/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    // Get the reading session
+    const session = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM reading_sessions WHERE id = ?', [sessionId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+    
+    if (!session) {
+      return res.status(404).json({ error: 'Reading session not found' });
+    }
+    
+    if (!session.url) {
+      return res.status(400).json({ error: 'No URL available for summarization' });
+    }
+    
+    // Extract article content
+    const content = await LLMService.extractArticleContent(session.url);
+    if (!content) {
+      return res.status(400).json({ error: 'Could not extract article content' });
+    }
+    
+    // Generate summary
+    const result = await LLMService.generateSummary(session.title, session.url, content);
+    if (!result) {
+      return res.status(500).json({ error: 'Failed to generate summary' });
+    }
+    
+    // Update the reading session with LLM summary
+    const updateSql = `
+      UPDATE reading_sessions 
+      SET llm_summary = ?, llm_model = ?, llm_generated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `;
+    
+    await new Promise((resolve, reject) => {
+      db.run(updateSql, [result.summary, `${result.provider}:${result.model}`, sessionId], (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    
+    res.json({
+      success: true,
+      summary: result.summary,
+      model: result.model,
+      provider: result.provider
+    });
+    
+  } catch (error) {
+    console.error('Error generating summary:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bulk summarize articles
+app.post('/api/llm/summarize-batch', async (req, res) => {
+  try {
+    const { sessionIds } = req.body;
+    
+    if (!sessionIds || !Array.isArray(sessionIds)) {
+      return res.status(400).json({ error: 'sessionIds array is required' });
+    }
+    
+    const results = [];
+    
+    for (const sessionId of sessionIds) {
+      try {
+        // Get the reading session
+        const session = await new Promise((resolve, reject) => {
+          db.get('SELECT * FROM reading_sessions WHERE id = ?', [sessionId], (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+          });
+        });
+        
+        if (!session || !session.url || session.llm_summary) {
+          results.push({ sessionId, status: 'skipped', reason: 'No URL or already summarized' });
+          continue;
+        }
+        
+        // Extract and summarize
+        const content = await LLMService.extractArticleContent(session.url);
+        if (!content) {
+          results.push({ sessionId, status: 'failed', reason: 'Could not extract content' });
+          continue;
+        }
+        
+        const summary = await LLMService.generateSummary(session.title, session.url, content);
+        if (!summary) {
+          results.push({ sessionId, status: 'failed', reason: 'Could not generate summary' });
+          continue;
+        }
+        
+        // Update database
+        const updateSql = `
+          UPDATE reading_sessions 
+          SET llm_summary = ?, llm_model = ?, llm_generated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `;
+        
+        await new Promise((resolve, reject) => {
+          db.run(updateSql, [summary.summary, `${summary.provider}:${summary.model}`, sessionId], (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        
+        results.push({ 
+          sessionId, 
+          status: 'success', 
+          summary: summary.summary,
+          model: summary.model 
+        });
+        
+      } catch (error) {
+        results.push({ sessionId, status: 'error', error: error.message });
+      }
+    }
+    
+    res.json({ success: true, results });
+    
+  } catch (error) {
+    console.error('Error in batch summarization:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
