@@ -82,6 +82,7 @@ function initializeLLMSchema() {
     api_key TEXT,
     api_url TEXT,
     is_active BOOLEAN DEFAULT FALSE,
+    priority INTEGER DEFAULT 1, -- 1 = highest priority, 2 = second, etc.
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   )`, (err) => {
@@ -92,67 +93,161 @@ function initializeLLMSchema() {
     }
   });
   
+  // Add priority column to existing table
+  db.run(`ALTER TABLE llm_config ADD COLUMN priority INTEGER DEFAULT 1`, (err) => {
+    if (err && !err.message.includes('duplicate column')) {
+      console.error('Error adding priority column:', err.message);
+    } else {
+      console.log('Priority column added/verified in llm_config table');
+    }
+  });
+  
   console.log('Database schema updated for LLM features');
 }
 
 // LLM Service Layer
 class LLMService {
-  static async getActiveConfig() {
+  static async getActiveConfigs() {
     return new Promise((resolve, reject) => {
-      db.get('SELECT * FROM llm_config WHERE is_active = 1 LIMIT 1', [], (err, row) => {
+      db.all('SELECT * FROM llm_config WHERE is_active = 1 ORDER BY priority ASC', [], (err, rows) => {
         if (err) reject(err);
         else {
-          if (row && row.api_key) {
-            row.api_key = decryptApiKey(row.api_key);
-          }
-          resolve(row);
+          const configs = rows.map(row => {
+            if (row.api_key) {
+              row.api_key = decryptApiKey(row.api_key);
+            }
+            return row;
+          });
+          resolve(configs);
         }
       });
     });
   }
   
+  static async getActiveConfig() {
+    const configs = await this.getActiveConfigs();
+    return configs.length > 0 ? configs[0] : null;
+  }
+  
   static async extractArticleContent(url) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; ReadingTracker/1.0)'
+    const userAgents = [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0'
+    ];
+    
+    for (const userAgent of userAgents) {
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+          },
+          timeout: 10000
+        });
+        
+        if (!response.ok) {
+          console.log(`HTTP ${response.status} with User-Agent: ${userAgent.substring(0, 30)}...`);
+          continue;
         }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        
+        const html = await response.text();
+        
+        // Enhanced content extraction
+        let content = html;
+        
+        // Remove scripts, styles, and navigation elements
+        content = content
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+          .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
+          .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+          .replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '')
+          .replace(/<div[^>]*class="[^"]*(?:ad|advertisement|sidebar|menu|navigation)[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+        
+        // Try to extract main content areas
+        const contentPatterns = [
+          /<article[^>]*>([\s\S]*?)<\/article>/gi,
+          /<div[^>]*class="[^"]*(?:content|post|article|entry)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
+          /<main[^>]*>([\s\S]*?)<\/main>/gi,
+          /<div[^>]*id="[^"]*(?:content|post|article|entry)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi
+        ];
+        
+        let extractedContent = '';
+        for (const pattern of contentPatterns) {
+          const matches = content.match(pattern);
+          if (matches && matches[0]) {
+            extractedContent = matches[0];
+            break;
+          }
+        }
+        
+        // If no specific content area found, use body
+        if (!extractedContent) {
+          const bodyMatch = content.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+          extractedContent = bodyMatch ? bodyMatch[1] : content;
+        }
+        
+        // Remove all HTML tags and clean up
+        extractedContent = extractedContent
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .trim();
+        
+        // Filter out navigation and menu text
+        const lines = extractedContent.split('\n').filter(line => {
+          const trimmed = line.trim().toLowerCase();
+          return trimmed.length > 10 && 
+                 !trimmed.includes('cookie') &&
+                 !trimmed.includes('subscribe') &&
+                 !trimmed.includes('sign up') &&
+                 !trimmed.includes('menu') &&
+                 !trimmed.includes('search');
+        });
+        
+        content = lines.join(' ').trim();
+        
+        // Must have substantial content
+        if (content.length < 200) {
+          console.log(`Content too short (${content.length} chars) with User-Agent: ${userAgent.substring(0, 30)}...`);
+          continue;
+        }
+        
+        // Limit content length for LLM processing
+        if (content.length > 8000) {
+          content = content.substring(0, 8000) + '...';
+        }
+        
+        console.log(`Successfully extracted ${content.length} characters from ${url}`);
+        return content;
+        
+      } catch (error) {
+        console.log(`Failed with User-Agent ${userAgent.substring(0, 30)}...: ${error.message}`);
+        continue;
       }
-      
-      const html = await response.text();
-      
-      // Simple text extraction - remove HTML tags
-      let content = html
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      // Limit content length for LLM processing
-      if (content.length > 8000) {
-        content = content.substring(0, 8000) + '...';
-      }
-      
-      return content;
-    } catch (error) {
-      console.error('Error extracting article content:', error);
-      return null;
     }
+    
+    console.error('All content extraction attempts failed for:', url);
+    return null;
   }
   
   static async generateSummary(title, url, content) {
-    try {
-      const config = await this.getActiveConfig();
-      if (!config) {
-        throw new Error('No active LLM configuration found');
-      }
-      
-      const prompt = `Please provide a concise, engaging summary of this article in 2-3 sentences. Focus on the key insights and takeaways that would be valuable for a professional newsletter.
+    const configs = await this.getActiveConfigs();
+    if (configs.length === 0) {
+      throw new Error('No active LLM configurations found');
+    }
+    
+    const prompt = `Please provide a concise, engaging summary of this article in 2-3 sentences. Focus on the key insights and takeaways that would be valuable for a professional newsletter.
 
 Title: ${title}
 URL: ${url}
@@ -160,34 +255,50 @@ Content: ${content}
 
 Summary:`;
 
-      let summary;
-      
-      switch (config.provider) {
-        case 'ollama':
-          summary = await this.generateWithOllama(config, prompt);
-          break;
-        case 'openai':
-          summary = await this.generateWithOpenAI(config, prompt);
-          break;
-        case 'gemini':
-          summary = await this.generateWithGemini(config, prompt);
-          break;
-        case 'grok':
-          summary = await this.generateWithGrok(config, prompt);
-          break;
-        default:
-          throw new Error(`Unsupported LLM provider: ${config.provider}`);
+    const errors = [];
+    
+    // Try each LLM in priority order (waterfall)
+    for (const config of configs) {
+      try {
+        console.log(`Trying ${config.provider}:${config.model_name} (priority ${config.priority})`);
+        
+        let summary;
+        
+        switch (config.provider) {
+          case 'ollama':
+            summary = await this.generateWithOllama(config, prompt);
+            break;
+          case 'openai':
+            summary = await this.generateWithOpenAI(config, prompt);
+            break;
+          case 'gemini':
+            summary = await this.generateWithGemini(config, prompt);
+            break;
+          case 'grok':
+            summary = await this.generateWithGrok(config, prompt);
+            break;
+          default:
+            throw new Error(`Unsupported LLM provider: ${config.provider}`);
+        }
+        
+        console.log(`✅ Success with ${config.provider}:${config.model_name}`);
+        return {
+          summary,
+          model: config.model_name,
+          provider: config.provider,
+          priority: config.priority
+        };
+        
+      } catch (error) {
+        const errorMsg = `${config.provider}:${config.model_name} failed: ${error.message}`;
+        console.log(`❌ ${errorMsg}`);
+        errors.push(errorMsg);
+        continue;
       }
-      
-      return {
-        summary,
-        model: config.model_name,
-        provider: config.provider
-      };
-    } catch (error) {
-      console.error('Error generating summary:', error);
-      return null;
     }
+    
+    // All models failed
+    throw new Error(`All LLM models failed. Errors: ${errors.join('; ')}`);
   }
   
   static async generateWithOllama(config, prompt) {
@@ -924,7 +1035,7 @@ app.post('/api/newsletter/generate-from-queue', async (req, res) => {
 
 // Helper function to generate newsletter from queue
 async function generateNewsletterFromQueue() {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     const sql = `
       SELECT 
         rs.*,
@@ -941,9 +1052,51 @@ async function generateNewsletterFromQueue() {
       ORDER BY rs.created_at DESC
     `;
     
-    db.all(sql, [], (err, sessions) => {
+    db.all(sql, [], async (err, sessions) => {
       if (err) {
         return reject(err);
+      }
+      
+      // Auto-generate summaries for articles without them
+      const articlesNeedingSummaries = sessions.filter(session => 
+        !session.llm_summary && session.url
+      );
+      
+      if (articlesNeedingSummaries.length > 0) {
+        console.log(`Auto-generating summaries for ${articlesNeedingSummaries.length} articles...`);
+        
+        for (const session of articlesNeedingSummaries) {
+          try {
+            // Extract content and generate summary
+            const content = await LLMService.extractArticleContent(session.url);
+            if (content) {
+              const result = await LLMService.generateSummary(session.title, session.url, content);
+              if (result) {
+                // Update the session with the new summary
+                const updateSql = `
+                  UPDATE reading_sessions 
+                  SET llm_summary = ?, llm_model = ?, llm_generated_at = CURRENT_TIMESTAMP
+                  WHERE id = ?
+                `;
+                
+                await new Promise((resolve, reject) => {
+                  db.run(updateSql, [result.summary, `${result.provider}:${result.model}`, session.id], (err) => {
+                    if (err) reject(err);
+                    else {
+                      session.llm_summary = result.summary;
+                      session.llm_model = `${result.provider}:${result.model}`;
+                      resolve();
+                    }
+                  });
+                });
+                
+                console.log(`Generated summary for: ${session.title}`);
+              }
+            }
+          } catch (error) {
+            console.error(`Failed to generate summary for ${session.title}:`, error.message);
+          }
+        }
       }
       
       // Remove duplicates based on URL and title
@@ -1109,7 +1262,7 @@ function generateNewsletterMarkdown(newsletter) {
 
 // Get LLM configurations
 app.get('/api/llm/config', (req, res) => {
-  const sql = 'SELECT * FROM llm_config ORDER BY provider, model_name';
+  const sql = 'SELECT * FROM llm_config ORDER BY priority ASC, provider, model_name';
   
   db.all(sql, [], (err, rows) => {
     if (err) {
@@ -1129,7 +1282,7 @@ app.get('/api/llm/config', (req, res) => {
 
 // Add/Update LLM configuration
 app.post('/api/llm/config', (req, res) => {
-  const { provider, model_name, api_key, api_url, is_active } = req.body;
+  const { provider, model_name, api_key, api_url, is_active, priority } = req.body;
   
   if (!provider || !model_name) {
     return res.status(400).json({ error: 'Provider and model_name are required' });
@@ -1139,11 +1292,11 @@ app.post('/api/llm/config', (req, res) => {
   const encryptedApiKey = api_key ? encryptApiKey(api_key) : null;
   
   const sql = `
-    INSERT OR REPLACE INTO llm_config (provider, model_name, api_key, api_url, is_active, updated_at)
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT OR REPLACE INTO llm_config (provider, model_name, api_key, api_url, is_active, priority, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `;
   
-  db.run(sql, [provider, model_name, encryptedApiKey, api_url, is_active || false], function(err) {
+  db.run(sql, [provider, model_name, encryptedApiKey, api_url, is_active || false, priority || 1], function(err) {
     if (err) {
       console.error('Error saving LLM config:', err.message);
       return res.status(500).json({ error: 'Internal server error' });

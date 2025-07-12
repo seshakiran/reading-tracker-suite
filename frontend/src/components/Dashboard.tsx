@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Clock, FileText, TrendingUp, Mail, Copy, Brain, RefreshCw } from 'lucide-react';
+import { BookOpen, Clock, FileText, TrendingUp, Mail, Copy, Brain, RefreshCw, AlertTriangle, Settings } from 'lucide-react';
 import { ReadingStats } from '../types/index.ts';
 import { getStats } from '../services/api.ts';
 
@@ -43,6 +43,7 @@ const Dashboard: React.FC = () => {
   const [newsletterFormats, setNewsletterFormats] = useState<{html: string, markdown: string} | null>(null);
   const [newsletter, setNewsletter] = useState<Newsletter | null>(null);
   const [showFullNewsletter, setShowFullNewsletter] = useState(false);
+  const [llmError, setLlmError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -125,6 +126,7 @@ const Dashboard: React.FC = () => {
   };
 
   const generateSummary = async (itemId: string) => {
+    setLlmError(null);
     try {
       const response = await fetch(`http://localhost:3001/api/llm/summarize/${itemId}`, {
         method: 'POST'
@@ -132,9 +134,13 @@ const Dashboard: React.FC = () => {
       
       if (response.ok) {
         await loadNewsletterQueue(); // Refresh to show new summary
+      } else {
+        const errorData = await response.json();
+        setLlmError(errorData.error || 'Failed to generate summary');
       }
     } catch (error) {
       console.error('Error generating summary:', error);
+      setLlmError('Network error. Please check your connection and try again.');
     }
   };
 
@@ -273,6 +279,34 @@ const Dashboard: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* LLM Error Display */}
+        {llmError && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-start space-x-3">
+              <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
+              <div className="flex-1">
+                <h4 className="text-sm font-medium text-red-800 mb-1">AI Summarization Failed</h4>
+                <p className="text-sm text-red-700 mb-3">{llmError}</p>
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs text-red-600">Suggestions:</span>
+                  <a href="#settings" className="text-xs text-red-700 hover:text-red-900 underline flex items-center space-x-1">
+                    <Settings className="h-3 w-3" />
+                    <span>Check LLM settings</span>
+                  </a>
+                  <span className="text-xs text-red-600">•</span>
+                  <span className="text-xs text-red-600">Try OpenAI/Grok as fallback</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setLlmError(null)}
+                className="text-red-400 hover:text-red-600"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
 
         {newsletterItems.length === 0 ? (
           <div className="text-center py-8 text-gray-500">

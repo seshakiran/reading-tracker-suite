@@ -8,6 +8,7 @@ interface LLMConfig {
   api_key: string | null;
   api_url: string | null;
   is_active: boolean;
+  priority: number;
 }
 
 interface OllamaModel {
@@ -29,7 +30,8 @@ const Settings: React.FC = () => {
     model_name: '',
     api_key: '',
     api_url: '',
-    is_active: false
+    is_active: false,
+    priority: 1
   });
 
   useEffect(() => {
@@ -86,7 +88,8 @@ const Settings: React.FC = () => {
           model_name: '',
           api_key: '',
           api_url: '',
-          is_active: false
+          is_active: false,
+          priority: 1
         });
       } else {
         throw new Error('Failed to save configuration');
@@ -218,6 +221,7 @@ const Settings: React.FC = () => {
                       {config.api_url && (
                         <div className="text-xs text-gray-500">{config.api_url}</div>
                       )}
+                      <div className="text-xs text-gray-500">Priority: {config.priority}</div>
                     </div>
                     {config.is_active && (
                       <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
@@ -332,6 +336,22 @@ const Settings: React.FC = () => {
                 placeholder={
                   newConfig.provider === 'ollama' ? 'http://localhost:11434' : 'Custom API endpoint'
                 }
+                className="input-field"
+              />
+            </div>
+
+            {/* Priority */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Priority (1 = highest)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={newConfig.priority}
+                onChange={(e) => setNewConfig({ ...newConfig, priority: parseInt(e.target.value) || 1 })}
+                placeholder="1"
                 className="input-field"
               />
             </div>
